@@ -195,9 +195,9 @@ st.sidebar.markdown("### Navigation Menu")
 menu = st.sidebar.radio(
     "Go to",
     [
-        "📊 1. Market Intelligence & Overview",
-        "📈 2. Visualizations & Analytics",
-        "🎯 3. Real-Time Model Prediction",
+        "📊 1. Data Overview & Market Signals",
+        "📈 2. Exploratory Analytics & Trends",
+        "🎯 3. Interactive Prediction Engine",
     ],
     label_visibility="collapsed",
 )
