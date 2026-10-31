@@ -1019,27 +1019,20 @@ elif menu == "🎯 3. Interactive Prediction Engine":
     )
 
     # --------------------------------------------------------
-    # GET ALL UNIQUE VALUES FROM DATASET
+    # GET UNIQUE VALUES FROM THE CURRENT FILTERED DATASET
     # --------------------------------------------------------
 
-    def category_options(column):
+    def category_options(data, column):
 
-        if column not in df_data.columns:
-            raise ValueError(
-                f"Dataset is missing the required category column: {column}"
-            )
+        if column not in data.columns:
+            return []
 
         values = (
-            df_data[column]
+            data[column]
             .dropna()
             .unique()
             .tolist()
         )
-
-        if not values:
-            raise ValueError(
-                f"Dataset has no usable values for category: {column}"
-            )
 
         return sorted(
             values,
@@ -1047,7 +1040,115 @@ elif menu == "🎯 3. Interactive Prediction Engine":
         )
 
     # --------------------------------------------------------
-    # PREDICTION FORM
+    # FILTER DATA BASED ON A SELECTED VALUE
+    # --------------------------------------------------------
+
+    def filter_data(data, column, selected_value):
+
+        if (
+            selected_value is None
+            or column not in data.columns
+        ):
+            return data
+
+        return data[
+            data[column].astype(str)
+            == str(selected_value)
+        ].copy()
+
+    # --------------------------------------------------------
+    # GET DESCRIPTIVE LABELS WHEN AVAILABLE
+    # --------------------------------------------------------
+
+    def get_display_labels(data, column):
+
+        possible_labels = {
+            "priceflag": [
+                "priceflag_label",
+                "price_status",
+                "priceflag_description",
+                "price_status_description",
+            ],
+
+            "pricetype": [
+                "pricetype_label",
+                "price_type",
+                "pricetype_description",
+                "price_type_description",
+            ],
+        }
+
+        label_column = None
+
+        for candidate in possible_labels.get(column, []):
+
+            if candidate in data.columns:
+                label_column = candidate
+                break
+
+        labels = {}
+
+        if label_column is not None:
+
+            mapping_data = data[
+                [column, label_column]
+            ].dropna().drop_duplicates()
+
+            for _, row in mapping_data.iterrows():
+
+                labels[row[column]] = str(
+                    row[label_column]
+                )
+
+        return labels
+
+    # --------------------------------------------------------
+    # SAFE SELECTBOX WITH AUTOMATIC OPTION UPDATES
+    # --------------------------------------------------------
+
+    def dynamic_selectbox(
+        data,
+        column,
+        label,
+        key,
+        display_labels=None,
+    ):
+
+        options = category_options(
+            data,
+            column,
+        )
+
+        if not options:
+
+            st.warning(
+                f"No available choices for {label} "
+                "based on the current selections."
+            )
+
+            return None
+
+        current_value = st.session_state.get(key)
+
+        if current_value not in options:
+
+            st.session_state[key] = options[0]
+
+        if display_labels is None:
+            display_labels = {}
+
+        return st.selectbox(
+            label,
+            options=options,
+            key=key,
+            format_func=lambda value: display_labels.get(
+                value,
+                str(value),
+            ),
+        )
+
+    # --------------------------------------------------------
+    # PREDICTION INTERFACE
     # --------------------------------------------------------
 
     if df_data is None or df_data.empty:
@@ -1061,12 +1162,43 @@ elif menu == "🎯 3. Interactive Prediction Engine":
 
         try:
 
-            with st.form("prediction_form"):
+            required_dropdown_columns = [
+                "admin1",
+                "admin2",
+                "market",
+                "category",
+                "commodity",
+                "unit",
+                "priceflag",
+                "pricetype",
+            ]
+
+            missing_columns = [
+                column
+                for column in required_dropdown_columns
+                if column not in df_data.columns
+            ]
+
+            if missing_columns:
+
+                st.error(
+                    "The dataset is missing the following "
+                    f"required prediction columns: {missing_columns}"
+                )
+
+            else:
+
+                # Start with the complete dataset.
+                filtered_data = df_data.copy()
 
                 col_a, col_b = st.columns(
                     2,
                     gap="large",
                 )
+
+                # ------------------------------------------------
+                # LEFT COLUMN: LOCATION AND DATE
+                # ------------------------------------------------
 
                 with col_a:
 
@@ -1078,6 +1210,7 @@ elif menu == "🎯 3. Interactive Prediction Engine":
                     date_val = st.date_input(
                         "Transaction Date",
                         value=pd.to_datetime("2022-12-15"),
+                        key="prediction_date",
                     )
 
                     latitude = st.slider(
@@ -1087,6 +1220,7 @@ elif menu == "🎯 3. Interactive Prediction Engine":
                         value=9.0200,
                         step=0.0100,
                         format="%.4f",
+                        key="prediction_latitude",
                     )
 
                     longitude = st.slider(
@@ -1096,17 +1230,44 @@ elif menu == "🎯 3. Interactive Prediction Engine":
                         value=38.7500,
                         step=0.0100,
                         format="%.4f",
+                        key="prediction_longitude",
                     )
 
-                    admin1 = st.selectbox(
+                    # Admin1
+                    admin1 = dynamic_selectbox(
+                        filtered_data,
+                        "admin1",
                         "Region (Admin1)",
-                        options=category_options("admin1"),
+                        "prediction_admin1",
                     )
 
-                    admin2 = st.selectbox(
+                    if admin1 is not None:
+
+                        filtered_data = filter_data(
+                            filtered_data,
+                            "admin1",
+                            admin1,
+                        )
+
+                    # Admin2 depends on Admin1.
+                    admin2 = dynamic_selectbox(
+                        filtered_data,
+                        "admin2",
                         "Zone (Admin2)",
-                        options=category_options("admin2"),
+                        "prediction_admin2",
                     )
+
+                    if admin2 is not None:
+
+                        filtered_data = filter_data(
+                            filtered_data,
+                            "admin2",
+                            admin2,
+                        )
+
+                # ------------------------------------------------
+                # RIGHT COLUMN: MARKET AND COMMODITY
+                # ------------------------------------------------
 
                 with col_b:
 
@@ -1115,158 +1276,239 @@ elif menu == "🎯 3. Interactive Prediction Engine":
                         unsafe_allow_html=True,
                     )
 
-                    market = st.selectbox(
+                    # Market depends on selected location.
+                    market = dynamic_selectbox(
+                        filtered_data,
+                        "market",
                         "Local Market Name",
-                        options=category_options("market"),
+                        "prediction_market",
                     )
 
-                    category = st.selectbox(
+                    if market is not None:
+
+                        filtered_data = filter_data(
+                            filtered_data,
+                            "market",
+                            market,
+                        )
+
+                    # Category depends on selected market.
+                    category = dynamic_selectbox(
+                        filtered_data,
+                        "category",
                         "Commodity Category",
-                        options=category_options("category"),
+                        "prediction_category",
                     )
 
-                    commodity = st.selectbox(
+                    if category is not None:
+
+                        filtered_data = filter_data(
+                            filtered_data,
+                            "category",
+                            category,
+                        )
+
+                    # Commodity depends on category.
+                    commodity = dynamic_selectbox(
+                        filtered_data,
+                        "commodity",
                         "Commodity Name",
-                        options=category_options("commodity"),
+                        "prediction_commodity",
                     )
 
-                    unit = st.selectbox(
+                    if commodity is not None:
+
+                        filtered_data = filter_data(
+                            filtered_data,
+                            "commodity",
+                            commodity,
+                        )
+
+                    # Unit depends on selected commodity.
+                    unit = dynamic_selectbox(
+                        filtered_data,
+                        "unit",
                         "Measurement Unit",
-                        options=category_options("unit"),
+                        "prediction_unit",
                     )
+
+                    if unit is not None:
+
+                        filtered_data = filter_data(
+                            filtered_data,
+                            "unit",
+                            unit,
+                        )
 
                     # Price Status
-                    priceflag_options = category_options(
-                        "priceflag"
+                    priceflag_labels = get_display_labels(
+                        df_data,
+                        "priceflag",
                     )
 
-                    priceflag_labels = {
-                        value: f"Code {value}"
-                        for value in priceflag_options
-                    }
-
-                    priceflag = st.selectbox(
+                    priceflag = dynamic_selectbox(
+                        filtered_data,
+                        "priceflag",
                         "Price Status",
-                        options=priceflag_options,
-                        format_func=lambda value: (
-                            priceflag_labels[value]
-                        ),
+                        "prediction_priceflag",
+                        display_labels=priceflag_labels,
                     )
+
+                    if priceflag is not None:
+
+                        filtered_data = filter_data(
+                            filtered_data,
+                            "priceflag",
+                            priceflag,
+                        )
 
                     # Price Type
-                    pricetype_options = category_options(
-                        "pricetype"
+                    pricetype_labels = get_display_labels(
+                        df_data,
+                        "pricetype",
                     )
 
-                    pricetype_labels = {
-                        value: f"Code {value}"
-                        for value in pricetype_options
-                    }
-
-                    pricetype = st.selectbox(
+                    pricetype = dynamic_selectbox(
+                        filtered_data,
+                        "pricetype",
                         "Price Type",
-                        options=pricetype_options,
-                        format_func=lambda value: (
-                            pricetype_labels[value]
-                        ),
+                        "prediction_pricetype",
+                        display_labels=pricetype_labels,
                     )
+
+                    if pricetype is not None:
+
+                        filtered_data = filter_data(
+                            filtered_data,
+                            "pricetype",
+                            pricetype,
+                        )
+
+                # ------------------------------------------------
+                # PREDICTION BUTTON
+                # ------------------------------------------------
 
                 st.markdown(
                     "<br>",
                     unsafe_allow_html=True,
                 )
 
-                submit = st.form_submit_button(
-                    "🚀 Predict Market Price"
+                submit = st.button(
+                    "🚀 Predict Market Price",
+                    key="run_market_prediction",
+                    use_container_width=True,
                 )
 
-            # ------------------------------------------------
-            # RUN PREDICTION
-            # ------------------------------------------------
+                # ------------------------------------------------
+                # CHECK SELECTED FEATURES
+                # ------------------------------------------------
 
-            if submit:
+                selection_ready = all(
+                    value is not None
+                    for value in [
+                        admin1,
+                        admin2,
+                        market,
+                        category,
+                        commodity,
+                        unit,
+                        priceflag,
+                        pricetype,
+                    ]
+                )
 
-                bundle, error_msg = load_model_assets()
+                if submit:
 
-                if error_msg:
+                    if not selection_ready:
 
-                    st.error(
-                        "Could not process prediction. "
-                        f"Serialized assets error: {error_msg}"
-                    )
-
-                else:
-
-                    try:
-
-                        dt_date = pd.to_datetime(
-                            date_val
+                        st.warning(
+                            "Please select valid values for all "
+                            "geographic and commodity features."
                         )
 
-                        input_row = pd.DataFrame([{
-                            "admin1": admin1,
-                            "admin2": admin2,
-                            "market": market,
-                            "latitude": latitude,
-                            "longitude": longitude,
-                            "category": category,
-                            "commodity": commodity,
-                            "unit": unit,
-                            "priceflag": priceflag,
-                            "pricetype": pricetype,
-                            "date": dt_date,
-                        }])
+                    else:
 
-                        prediction = bundle["models"][
-                            "price"
-                        ].predict(
-                            prepare_model_features(input_row)
-                        )[0]
+                        bundle, error_msg = load_model_assets()
 
-                        st.success(
-                            f"✨ Predicted Local Market Price: "
-                            f"**{prediction:,.2f} ETB**"
-                        )
+                        if error_msg:
 
-                        # Model performance metrics
-                        with st.expander(
-                            "📌 View Model Training & Test Performance Metrics"
-                        ):
-
-                            m1, m2, m3, m4 = st.columns(4)
-
-                            price_metrics = bundle[
-                                "metrics"
-                            ]["price"]
-
-                            m1.metric(
-                                "Training R² Score",
-                                f"{price_metrics['train_r2']:.4f}",
+                            st.error(
+                                "Could not process prediction. "
+                                f"Serialized assets error: {error_msg}"
                             )
 
-                            m2.metric(
-                                "Testing R² Score",
-                                f"{price_metrics['test_r2']:.4f}",
-                            )
+                        else:
 
-                            m3.metric(
-                                "Testing RMSE",
-                                f"{price_metrics['test_rmse']:.4f}",
-                            )
+                            try:
 
-                            m4.metric(
-                                "Overfit Gap",
-                                f"{price_metrics['overfit_gap']:.4f}",
-                            )
+                                dt_date = pd.to_datetime(
+                                    date_val
+                                )
 
-                    except Exception as ex:
+                                input_row = pd.DataFrame([{
+                                    "admin1": admin1,
+                                    "admin2": admin2,
+                                    "market": market,
+                                    "latitude": latitude,
+                                    "longitude": longitude,
+                                    "category": category,
+                                    "commodity": commodity,
+                                    "unit": unit,
+                                    "priceflag": priceflag,
+                                    "pricetype": pricetype,
+                                    "date": dt_date,
+                                }])
 
-                        st.error(
-                            f"Error processing prediction parameters: {ex}"
-                        )
+                                prediction = bundle["models"][
+                                    "price"
+                                ].predict(
+                                    prepare_model_features(input_row)
+                                )[0]
+
+                                st.success(
+                                    f"✨ Predicted Local Market Price: "
+                                    f"**{prediction:,.2f} ETB**"
+                                )
+
+                                # Model performance metrics
+                                with st.expander(
+                                    "📌 View Model Training & Test Performance Metrics"
+                                ):
+
+                                    m1, m2, m3, m4 = st.columns(4)
+
+                                    price_metrics = bundle[
+                                        "metrics"
+                                    ]["price"]
+
+                                    m1.metric(
+                                        "Training R² Score",
+                                        f"{price_metrics['train_r2']:.4f}",
+                                    )
+
+                                    m2.metric(
+                                        "Testing R² Score",
+                                        f"{price_metrics['test_r2']:.4f}",
+                                    )
+
+                                    m3.metric(
+                                        "Testing RMSE",
+                                        f"{price_metrics['test_rmse']:.4f}",
+                                    )
+
+                                    m4.metric(
+                                        "Overfit Gap",
+                                        f"{price_metrics['overfit_gap']:.4f}",
+                                    )
+
+                            except Exception as ex:
+
+                                st.error(
+                                    f"Error processing prediction parameters: {ex}"
+                                )
 
         except Exception as ex:
 
             st.error(
-                f"Unable to create prediction form: {ex}"
+                f"Unable to create prediction interface: {ex}"
             )
