@@ -213,7 +213,7 @@ df_data = load_dataset(uploaded_file)
 # =============================================================================
 # PAGE 1: MARKET INTELLIGENCE & OVERVIEW
 # =============================================================================
-if menu == "📊 1. Market Intelligence & Overview":
+if menu == "📊 1.Data Overview & Market Signals":
   st.header("📊 Key Dataset Insights & Aggregations Overview")
   st.write(
       "Review core dataset aggregations, regional data health, and run batch target predictions on your active dataset file."
@@ -377,7 +377,7 @@ if menu == "📊 1. Market Intelligence & Overview":
 # =============================================================================
 # PAGE 2: VISUALIZATIONS & ANALYTICS
 # =============================================================================
-elif menu == "📈 2. Visualizations & Analytics":
+elif menu == "📈 2. Exploratory Analytics & Trends":
   st.header("📈 Market Insights & Historical Data Visualizations")
   st.markdown("---")
   if df_data is not None and not df_data.empty:
@@ -485,7 +485,7 @@ elif menu == "📈 2. Visualizations & Analytics":
 # =============================================================================
 # PAGE 3: REAL-TIME MODEL PREDICTION
 # =============================================================================
-elif menu == "🎯 3. Real-Time Model Prediction":
+elif menu == "🎯 3. Interactive Prediction Engine":
   st.header("🎯 Real-Time Market Price Inference")
   st.markdown(
       "Select actual geographic, market, and commodity parameters below to"
