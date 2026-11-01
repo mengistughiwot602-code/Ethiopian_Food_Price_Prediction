@@ -489,155 +489,506 @@ elif menu == "📈 2. Exploratory Analytics & Trends":
     else:
         st.info("ℹ️ Loading dashboard metrics and visuals...")
 
+
 # =============================================================================
-# PAGE 3: INTERACTIVE PREDICTION ENGINE (WITH CASCADING & SMART UI FILTERS)
+# PAGE 3: INTERACTIVE PREDICTION ENGINE
+# Dynamic Cascading Dropdowns for Ethiopian Administrative Regions
 # =============================================================================
+
 elif menu == "🎯 3. Interactive Prediction Engine":
+
     st.header("🎯 Real-Time Market Price Inference")
     st.markdown(
-        "Select geographic, market, and commodity parameters below to evaluate predicted food prices."
+        "Select a region, zone, local market, and commodity. "
+        "The available choices automatically update based on your selections."
     )
 
-    if df_data is not None and not df_data.empty and {"admin1", "admin2", "market", "category", "commodity"}.issubset(df_data.columns):
-        regions_list = sorted(df_data["admin1"].dropna().unique().tolist())
-        categories_list = sorted(df_data["category"].dropna().unique().tolist())
-        units_list = sorted(df_data["unit"].dropna().unique().tolist())
-        flags_list = sorted(df_data["priceflag"].dropna().unique().tolist())
-        types_list = sorted(df_data["pricetype"].dropna().unique().tolist())
-    else:
-        regions_list = ["Addis Ababa", "Amhara", "Oromia", "SNNPR", "Somali", "Tigray", "Afar", "Dire Dawa"]
-        categories_list = ["cereals and tubers", "pulses and nuts", "vegetables and fruits", "meat, fish and eggs"]
-        units_list = ["KG", "100 KG", "L", "Head", "Unit", "Day"]
-        flags_list = ["actual", "actual,aggregate", "aggregate", "forecast"]
-        types_list = ["Retail", "Wholesale"]
+    # -------------------------------------------------------------------------
+    # DEFAULT OPTIONS (used only when the dataset does not contain a column)
+    # -------------------------------------------------------------------------
+
+    default_admin1 = [
+        "Addis Ababa", "Oromia", "Amhara", "Tigray",
+        "Somali", "SNNPR / Sidama", "Afar", "Dire Dawa"
+    ]
+
+    default_admin2 = [
+        "Addis Ababa Zone", "Adama Special Zone",
+        "Bahir Dar Special Zone", "Hawassa Special Zone",
+        "Mekelle Special Zone", "Dire Dawa Zone",
+        "East Shewa Zone", "West Gojjam Zone",
+        "North Shewa Zone", "South Wollo Zone"
+    ]
+
+    default_markets = [
+        "Addis Ababa Market", "Bahir Dar Market",
+        "Hawassa Market", "Adama Market", "Mekelle Market"
+    ]
+
+    default_categories = [
+        "Cereals and Tubers", "Pulses and Nuts",
+        "Vegetables and Fruits", "Meat, Fish and Eggs"
+    ]
+
+    default_commodities = [
+        "Maize (White)", "Teff (Mixed)",
+        "Wheat", "Sorghum", "Barley"
+    ]
+
+    default_units = ["KG", "Quintal", "Pound", "Litre"]
+
+    default_priceflags = [
+        "Actual / Verified", "Estimated / Imputed"
+    ]
+
+    default_pricetypes = ["Retail", "Wholesale"]
+
+    # -------------------------------------------------------------------------
+    # HELPER FUNCTIONS
+    # -------------------------------------------------------------------------
+
+    def get_options(data, column, fallback):
+        """Extract unique dropdown values from the filtered dataset."""
+
+        if data is not None and not data.empty and column in data.columns:
+            values = (
+                data[column]
+                .dropna()
+                .astype(str)
+                .str.strip()
+            )
+            values = sorted(values[values != ""].unique().tolist())
+
+            if values:
+                return values
+
+        return fallback
+
+    def reset_selection(*keys):
+        """Remove dependent selections when a parent selection changes."""
+
+        for key in keys:
+            st.session_state.pop(key, None)
+
+    def reset_region():
+        reset_selection(
+            "admin2_key", "market_key", "category_key",
+            "commodity_key", "unit_key",
+            "priceflag_key", "pricetype_key"
+        )
+
+    def reset_zone():
+        reset_selection(
+            "market_key", "category_key",
+            "commodity_key", "unit_key",
+            "priceflag_key", "pricetype_key"
+        )
+
+    def reset_market():
+        reset_selection(
+            "category_key", "commodity_key", "unit_key",
+            "priceflag_key", "pricetype_key"
+        )
+
+    def reset_category():
+        reset_selection(
+            "commodity_key", "unit_key",
+            "priceflag_key", "pricetype_key"
+        )
+
+    def reset_commodity():
+        reset_selection(
+            "unit_key", "priceflag_key", "pricetype_key"
+        )
+
+    # -------------------------------------------------------------------------
+    # DATASET VALIDATION
+    # -------------------------------------------------------------------------
+
+    if df_data is None or df_data.empty:
+        st.error("No dataset available. Please load your food price dataset.")
+        st.stop()
+
+    required_geo_columns = ["admin1", "admin2", "market"]
+
+    missing_columns = [
+        col for col in required_geo_columns
+        if col not in df_data.columns
+    ]
+
+    if missing_columns:
+        st.error(
+            f"Your dataset is missing geographic columns: {missing_columns}"
+        )
+        st.stop()
+
+    # -------------------------------------------------------------------------
+    # SPATIAL AND TEMPORAL DETAILS
+    # -------------------------------------------------------------------------
 
     col_a, col_b = st.columns(2, gap="large")
 
     with col_a:
+
         st.markdown(
             '<div class="section-header">📍 Spatial & Temporal Details</div>',
             unsafe_allow_html=True,
         )
 
         date_val = st.date_input(
-            "Transaction Date", value=pd.to_datetime("2022-12-15")
+            "Transaction Date",
+            value=pd.to_datetime("2022-12-15"),
+            key="prediction_date"
         )
 
-        latitude = st.slider(
-            "Latitude Coordinate",
-            min_value=3.0000,
-            max_value=15.0000,
-            value=9.0200,
-            step=0.0100,
-            format="%.4f",
+        # -------------------------------------------------------------
+        # ADMIN1: REGION
+        # -------------------------------------------------------------
+
+        admin1_options = get_options(
+            df_data, "admin1", default_admin1
         )
 
-        longitude = st.slider(
-            "Longitude Coordinate",
-            min_value=33.0000,
-            max_value=48.0000,
-            value=38.7500,
-            step=0.0100,
-            format="%.4f",
-        )
-
-        selected_admin1 = st.selectbox("Region (Admin1)", options=regions_list)
-
-        if df_data is not None and not df_data.empty and {"admin1", "admin2"}.issubset(df_data.columns):
-            filtered_admin2 = sorted(
-                df_data[df_data["admin1"] == selected_admin1]["admin2"].dropna().unique().tolist()
+        if (
+            "admin1_key" not in st.session_state
+            or st.session_state["admin1_key"] not in admin1_options
+        ):
+            st.session_state["admin1_key"] = (
+                "Amhara" if "Amhara" in admin1_options
+                else admin1_options[0]
             )
-        else:
-            filtered_admin2 = ["Addis Ababa Zone", "Adama Zone", "Bahir Dar Zone", "Hawassa Zone"]
-        
-        selected_admin2 = st.selectbox("Zone (Admin2)", options=filtered_admin2 if filtered_admin2 else ["Default Zone"])
+
+        admin1 = st.selectbox(
+            "Region (Admin1)",
+            options=admin1_options,
+            key="admin1_key",
+            on_change=reset_region
+        )
+
+        # -------------------------------------------------------------
+        # FILTER DATA BY SELECTED REGION
+        # -------------------------------------------------------------
+
+        region_df = df_data[
+            df_data["admin1"].astype(str).str.strip() == admin1
+        ].copy()
+
+        # -------------------------------------------------------------
+        # ADMIN2: ZONE
+        # -------------------------------------------------------------
+
+        admin2_options = get_options(
+            region_df, "admin2", default_admin2
+        )
+
+        if (
+            "admin2_key" not in st.session_state
+            or st.session_state["admin2_key"] not in admin2_options
+        ):
+            st.session_state["admin2_key"] = admin2_options[0]
+
+        admin2 = st.selectbox(
+            "Zone (Admin2)",
+            options=admin2_options,
+            key="admin2_key",
+            on_change=reset_zone
+        )
+
+        # -------------------------------------------------------------
+        # FILTER DATA BY SELECTED ZONE
+        # -------------------------------------------------------------
+
+        zone_df = region_df[
+            region_df["admin2"].astype(str).str.strip() == admin2
+        ].copy()
+
+        # -------------------------------------------------------------
+        # LATITUDE AND LONGITUDE
+        # -------------------------------------------------------------
+
+        latitude_default = 9.0200
+        longitude_default = 38.7500
+
+        if {"latitude", "longitude"}.issubset(zone_df.columns):
+            coordinates = zone_df[
+                ["latitude", "longitude"]
+            ].apply(pd.to_numeric, errors="coerce").dropna()
+
+            if not coordinates.empty:
+                latitude_default = float(coordinates["latitude"].median())
+                longitude_default = float(coordinates["longitude"].median())
+
+        latitude = st.number_input(
+            "Latitude Coordinate",
+            min_value=3.0,
+            max_value=15.0,
+            value=latitude_default,
+            format="%.4f",
+            key="prediction_latitude"
+        )
+
+        longitude = st.number_input(
+            "Longitude Coordinate",
+            min_value=33.0,
+            max_value=48.0,
+            value=longitude_default,
+            format="%.4f",
+            key="prediction_longitude"
+        )
 
     with col_b:
+
         st.markdown(
-            '<div class="section-header">🛒 Market & Commodity Attributes</div>',
+            '<div class="section-header">🛒 Market & Feature Choices</div>',
             unsafe_allow_html=True,
         )
 
-        if df_data is not None and not df_data.empty and {"admin1", "admin2", "market"}.issubset(df_data.columns):
-            filtered_markets = sorted(
-                df_data[
-                    (df_data["admin1"] == selected_admin1) & (df_data["admin2"] == selected_admin2)
-                ]["market"].dropna().unique().tolist()
-            )
-            if not filtered_markets:
-                filtered_markets = sorted(df_data[df_data["admin1"] == selected_admin1]["market"].dropna().unique().tolist())
-        else:
-            filtered_markets = ["Addis Ababa Market", "Adama Market", "Baher Dar Market"]
+        # -------------------------------------------------------------
+        # LOCAL MARKET: DEPENDS ON REGION AND ZONE
+        # -------------------------------------------------------------
 
-        selected_market = st.selectbox("Local Market Name", options=filtered_markets if filtered_markets else ["Default Market"])
+        market_options = get_options(
+            zone_df, "market", default_markets
+        )
 
-        selected_category = st.selectbox("Commodity Category", options=categories_list)
+        if (
+            "market_key" not in st.session_state
+            or st.session_state["market_key"] not in market_options
+        ):
+            st.session_state["market_key"] = market_options[0]
 
-        if df_data is not None and not df_data.empty and {"category", "commodity"}.issubset(df_data.columns):
-            filtered_commodities = sorted(
-                df_data[df_data["category"] == selected_category]["commodity"].dropna().unique().tolist()
-            )
-        else:
-            filtered_commodities = ["Maize (white)", "Wheat", "Sorghum", "Teff"]
+        market = st.selectbox(
+            "Local Market Name",
+            options=market_options,
+            key="market_key",
+            on_change=reset_market
+        )
 
-        selected_commodity = st.selectbox("Commodity Name", options=filtered_commodities if filtered_commodities else ["Default Commodity"])
+        # -------------------------------------------------------------
+        # FILTER BY SELECTED MARKET
+        # -------------------------------------------------------------
 
-        selected_unit = st.selectbox("Measurement Unit", options=units_list)
+        market_df = zone_df[
+            zone_df["market"].astype(str).str.strip() == market
+        ].copy()
 
-        selected_priceflag = st.selectbox("Price Status (Price Flag)", options=flags_list)
+        # -------------------------------------------------------------
+        # CATEGORY: DEPENDS ON GEOGRAPHIC SELECTION
+        # -------------------------------------------------------------
 
-        selected_pricetype = st.selectbox("Price Type", options=types_list)
+        category_options = get_options(
+            market_df, "category", default_categories
+        )
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🚀 Predict Market Price"):
+        if (
+            "category_key" not in st.session_state
+            or st.session_state["category_key"] not in category_options
+        ):
+            st.session_state["category_key"] = category_options[0]
+
+        category = st.selectbox(
+            "Commodity Category",
+            options=category_options,
+            key="category_key",
+            on_change=reset_category
+        )
+
+        # -------------------------------------------------------------
+        # FILTER BY CATEGORY
+        # -------------------------------------------------------------
+
+        category_df = market_df[
+            market_df["category"].astype(str).str.strip() == category
+        ].copy() if "category" in market_df.columns else market_df
+
+        # -------------------------------------------------------------
+        # COMMODITY: DEPENDS ON SELECTED CATEGORY
+        # -------------------------------------------------------------
+
+        commodity_options = get_options(
+            category_df, "commodity", default_commodities
+        )
+
+        if (
+            "commodity_key" not in st.session_state
+            or st.session_state["commodity_key"] not in commodity_options
+        ):
+            st.session_state["commodity_key"] = commodity_options[0]
+
+        commodity = st.selectbox(
+            "Commodity Name",
+            options=commodity_options,
+            key="commodity_key",
+            on_change=reset_commodity
+        )
+
+        # -------------------------------------------------------------
+        # FILTER BY COMMODITY
+        # -------------------------------------------------------------
+
+        commodity_df = category_df[
+            category_df["commodity"].astype(str).str.strip() == commodity
+        ].copy() if "commodity" in category_df.columns else category_df
+
+        # -------------------------------------------------------------
+        # UNIT: DEPENDS ON SELECTED COMMODITY
+        # -------------------------------------------------------------
+
+        unit_options = get_options(
+            commodity_df, "unit", default_units
+        )
+
+        unit = st.selectbox(
+            "Measurement Unit",
+            options=unit_options,
+            key="unit_key"
+        )
+
+        # -------------------------------------------------------------
+        # PRICE FLAG
+        # -------------------------------------------------------------
+
+        priceflag_options = get_options(
+            commodity_df, "priceflag", default_priceflags
+        )
+
+        priceflag = st.selectbox(
+            "Price Status / Flag",
+            options=priceflag_options,
+            key="priceflag_key"
+        )
+
+        # -------------------------------------------------------------
+        # PRICE TYPE
+        # -------------------------------------------------------------
+
+        pricetype_options = get_options(
+            commodity_df, "pricetype", default_pricetypes
+        )
+
+        pricetype = st.selectbox(
+            "Price Type (e.g., Retail vs Wholesale)",
+            options=pricetype_options,
+            key="pricetype_key"
+        )
+
+    # -------------------------------------------------------------------------
+    # SELECTED DATA SUMMARY
+    # -------------------------------------------------------------------------
+
+    st.markdown("---")
+    st.subheader("📋 Selected Market Information")
+
+    summary1, summary2, summary3, summary4 = st.columns(4)
+
+    summary1.metric("Selected Region", admin1)
+    summary2.metric("Selected Zone", admin2)
+    summary3.metric("Selected Market", market)
+    summary4.metric("Available Records", f"{len(market_df):,}")
+
+    # -------------------------------------------------------------------------
+    # PREDICTION BUTTON
+    # -------------------------------------------------------------------------
+
+    st.markdown("---")
+
+    if st.button(
+        "🚀 Predict Market Price",
+        use_container_width=True
+    ):
+
         bundle, error_msg = load_model_assets()
 
         if error_msg:
             st.error(
                 f"Could not process prediction. Serialized assets error: {error_msg}"
             )
+
         else:
             try:
+
                 dt_date = pd.to_datetime(date_val)
+
                 input_row = pd.DataFrame([{
-                    "admin1": selected_admin1,
-                    "admin2": selected_admin2,
-                    "market": selected_market,
+                    "admin1": admin1,
+                    "admin2": admin2,
+                    "market": market,
                     "latitude": latitude,
                     "longitude": longitude,
-                    "category": selected_category,
-                    "commodity": selected_commodity,
-                    "unit": selected_unit,
-                    "priceflag": selected_priceflag,
-                    "pricetype": selected_pricetype,
+                    "category": category,
+                    "commodity": commodity,
+                    "unit": unit,
+                    "priceflag": priceflag,
+                    "pricetype": pricetype,
                     "date": dt_date,
                 }])
 
+                # Prepare model features
                 X_single = prepare_model_features(input_row)
 
+                # Predict price
                 if "price" in bundle["models"]:
-                    prediction = bundle["models"]["price"].predict(X_single)[0]
+                    prediction = bundle["models"]["price"].predict(
+                        X_single
+                    )[0]
+
                 else:
-                    first_key = list(bundle["models"].keys())[0]
-                    prediction = bundle["models"][first_key].predict(X_single)[0]
+                    prediction = bundle["models"].predict(
+                        X_single
+                    )[0]
 
                 st.success(
-                    f"✨ Predicted Local Market Price: **{prediction:,.2f} ETB**"
+                    f"✨ Predicted Local Market Price: "
+                    f"**{prediction:,.2f} ETB**"
                 )
 
-                with st.expander("📌 View Model Training & Test Performance Metrics"):
+                # -----------------------------------------------------
+                # MODEL PERFORMANCE METRICS
+                # -----------------------------------------------------
+
+                with st.expander(
+                    "📌 View Model Training & Test Performance Metrics"
+                ):
+
                     m1, m2, m3, m4 = st.columns(4)
-                    if "metrics" in bundle and "price" in bundle["metrics"] and bundle["metrics"]["price"]:
+
+                    if (
+                        "metrics" in bundle
+                        and "price" in bundle["metrics"]
+                    ):
+
                         price_metrics = bundle["metrics"]["price"]
-                        m1.metric("Training R² Score", f"{price_metrics.get('train_r2', 0.9837):.4f}")
-                        m2.metric("Testing R² Score", f"{price_metrics.get('test_r2', 0.9729):.4f}")
-                        m3.metric("Testing RMSE", f"{price_metrics.get('test_rmse', 306.9749):.4f}")
-                        m4.metric("Overfit Gap", f"{price_metrics.get('overfit_gap', 0.0107):.4f}")
+
+                        m1.metric(
+                            "Training R² Score",
+                            f"{price_metrics.get('train_r2', 0.9837):.4f}"
+                        )
+
+                        m2.metric(
+                            "Testing R² Score",
+                            f"{price_metrics.get('test_r2', 0.9729):.4f}"
+                        )
+
+                        m3.metric(
+                            "Testing RMSE",
+                            f"{price_metrics.get('test_rmse', 306.9749):.4f}"
+                        )
+
+                        m4.metric(
+                            "Overfit Gap",
+                            f"{price_metrics.get('overfit_gap', 0.0107):.4f}"
+                        )
+
                     else:
+
                         m1.metric("Training R² Score", "0.9837")
                         m2.metric("Testing R² Score", "0.9729")
                         m3.metric("Testing RMSE", "306.9749")
                         m4.metric("Overfit Gap", "0.0107")
 
             except Exception as ex:
-                st.error(f"Error processing prediction parameters: {ex}")
+
+                st.error(
+                    f"Error processing prediction parameters: {ex}"
+                )
+
