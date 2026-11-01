@@ -187,7 +187,7 @@ def load_model_assets():
 
 
 # =============================================================================
-# DATASET LOADER (WITH SEAMLESS FALLBACK)
+# DATASET LOADER
 # =============================================================================
 
 @st.cache_data
@@ -205,30 +205,27 @@ def load_dataset(uploaded_file=None):
         else:
             excel_files = [
                 file for file in os.listdir(".")
-                if file.lower().endswith(".xlsx") or file.lower().endswith(".csv")
+                if file.lower().endswith(".xlsx")
             ]
             if excel_files:
-                if excel_files[0].lower().endswith(".csv"):
-                    df = pd.read_csv(excel_files[0])
-                else:
-                    df = pd.read_excel(excel_files[0])
+                df = pd.read_excel(excel_files[0])
             else:
-                # Fallback default dataset so the UI and buttons are always active on startup
+                # Fallback default dataset so the app starts smoothly without errors
                 df = pd.DataFrame({
-                    "date": pd.date_range(start="2020-01-01", periods=15, freq="M"),
-                    "admin1": ["Addis Ababa"] * 15,
-                    "admin2": ["AA ZONE1"] * 15,
-                    "market": ["Addis Ababa"] * 15,
-                    "latitude": [9.024325] * 15,
-                    "longitude": [38.749226] * 15,
-                    "category": ["cereals and tubers"] * 15,
-                    "commodity": ["Maize (white)"] * 15,
-                    "unit": ["100 KG"] * 15,
-                    "priceflag": ["actual"] * 15,
-                    "pricetype": ["Retail"] * 15,
-                    "price": [850.0, 860.0, 870.0, 880.0, 890.0, 900.0, 910.0, 920.0, 930.0, 940.0, 950.0, 960.0, 970.0, 980.0, 990.0],
-                    "usdprice": [20.0, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.8, 20.9, 21.0, 21.1, 21.2, 21.3, 21.4],
-                    "currency": ["ETB"] * 15
+                    "date": pd.date_range(start="2020-01-01", periods=10, freq="M"),
+                    "admin1": ["Addis Ababa"] * 10,
+                    "admin2": ["AA ZONE1"] * 10,
+                    "market": ["Addis Ababa"] * 10,
+                    "latitude": [9.024325] * 10,
+                    "longitude": [38.749226] * 10,
+                    "category": ["cereals and tubers"] * 10,
+                    "commodity": ["Maize (white)"] * 10,
+                    "unit": ["100 KG"] * 10,
+                    "priceflag": ["actual"] * 10,
+                    "pricetype": ["Retail"] * 10,
+                    "price": [850.0, 860.0, 870.0, 880.0, 890.0, 900.0, 910.0, 920.0, 930.0, 940.0],
+                    "usdprice": [20.0, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.8, 20.9],
+                    "currency": ["ETB"] * 10
                 })
 
         # The WFP Excel file has a metadata row containing values such as
@@ -247,13 +244,9 @@ def load_dataset(uploaded_file=None):
             if column not in df.columns
         ]
         if missing_columns:
-            for col in missing_columns:
-                if col == "date":
-                    df[col] = pd.date_range(start="2020-01-01", periods=len(df), freq="M")
-                elif col in ["latitude", "longitude", "price", "usdprice"]:
-                    df[col] = 0.0
-                else:
-                    df[col] = "N/A"
+            raise ValueError(
+                f"Dataset is missing required columns: {missing_columns}"
+            )
 
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
@@ -268,22 +261,22 @@ def load_dataset(uploaded_file=None):
         return df
 
     except Exception as error:
-        # Fallback default dataset on any unexpected exception to keep UI active
+        # Fallback default dataframe in case of parsing exceptions
         df_fallback = pd.DataFrame({
-            "date": pd.date_range(start="2020-01-01", periods=15, freq="M"),
-            "admin1": ["Addis Ababa"] * 15,
-            "admin2": ["AA ZONE1"] * 15,
-            "market": ["Addis Ababa"] * 15,
-            "latitude": [9.024325] * 15,
-            "longitude": [38.749226] * 15,
-            "category": ["cereals and tubers"] * 15,
-            "commodity": ["Maize (white)"] * 15,
-            "unit": ["100 KG"] * 15,
-            "priceflag": ["actual"] * 15,
-            "pricetype": ["Retail"] * 15,
-            "price": [850.0, 860.0, 870.0, 880.0, 890.0, 900.0, 910.0, 920.0, 930.0, 940.0, 950.0, 960.0, 970.0, 980.0, 990.0],
-            "usdprice": [20.0, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.8, 20.9, 21.0, 21.1, 21.2, 21.3, 21.4],
-            "currency": ["ETB"] * 15
+            "date": pd.date_range(start="2020-01-01", periods=10, freq="M"),
+            "admin1": ["Addis Ababa"] * 10,
+            "admin2": ["AA ZONE1"] * 10,
+            "market": ["Addis Ababa"] * 10,
+            "latitude": [9.024325] * 10,
+            "longitude": [38.749226] * 10,
+            "category": ["cereals and tubers"] * 10,
+            "commodity": ["Maize (white)"] * 10,
+            "unit": ["100 KG"] * 10,
+            "priceflag": ["actual"] * 10,
+            "pricetype": ["Retail"] * 10,
+            "price": [850.0, 860.0, 870.0, 880.0, 890.0, 900.0, 910.0, 920.0, 930.0, 940.0],
+            "usdprice": [20.0, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.8, 20.9],
+            "currency": ["ETB"] * 10
         })
         df_fallback.columns = [c.lower() for c in df_fallback.columns]
         df_fallback["date"] = pd.to_datetime(df_fallback["date"], errors="coerce")
@@ -578,26 +571,25 @@ if menu == "📊 1. Data Overview & Market Signals":
     st.subheader("🔮 Batch Price & USD Price Prediction")
     st.write(
         "Run the trained machine learning model across all records "
-        "in your dataset."
+        "in your uploaded dataset."
     )
 
     if uploaded_file is None:
-        st.info(
-            "ℹ️ **Note:** Using default built-in sample data. "
-            "You can upload a custom dataset using the sidebar uploader anytime."
+        st.warning(
+            "⚠️ **Upload Required:** Upload a custom dataset using "
+            "the sidebar uploader to enable batch predictions."
         )
 
-    if df_data.empty:
+    elif df_data.empty:
         st.error(
-            "The dataset could not be loaded or does not "
+            "The uploaded dataset could not be loaded or does not "
             "contain the required columns."
         )
 
     else:
-        if uploaded_file is not None:
-            st.success(
-                f"📁 Active custom file loaded: **{uploaded_file.name}**"
-            )
+        st.success(
+            f"📁 Active custom file loaded: **{uploaded_file.name}**"
+        )
 
         selected_targets = st.multiselect(
             "Select prediction targets",
@@ -607,7 +599,7 @@ if menu == "📊 1. Data Overview & Market Signals":
         )
 
         st.caption(
-            "The price/usdprice values are not model inputs; "
+            "The uploaded price/usdprice values are not model inputs; "
             "each target is predicted independently."
         )
 
