@@ -457,4 +457,165 @@ if menu == "📊 1. Data Overview & Market Signals":
     )
 
     batch_uploaded_file = st.file_uploader(
-        "📁 Upload Custom Dataset for
+        "📁 Upload Custom Dataset for Batch Prediction",
+        type=["xlsx", "csv"],
+        key="batch_uploader"
+    )
+
+    batch_df = load_dataset(batch_uploaded_file)
+
+    if batch_uploaded_file is None:
+        st.info("💡 *Tip:* Using built-in data for overview/visualizations. Upload a file above only if you want to run batch predictions on a custom dataset.")
+
+    if batch_df.empty:
+        st.error("The dataset could not be loaded.")
+    else:
+        selected_targets = st.multiselect(
+            "Select prediction targets",
+            TARGET_COLUMNS,
+            default=TARGET_COLUMNS,
+            key="batch_target_selector",
+        )
+
+        if st.button("🚀 Run Batch Prediction with Model"):
+            bundle, error_msg = load_model_assets()
+
+            if error_msg:
+                st.error(f"Could not load model pipelines: {error_msg}")
+            elif not selected_targets:
+                st.warning("Select at least one target.")
+            else:
+                try:
+                    df_predicted = batch_df.copy()
+                    X_batch = prepare_model_features(df_predicted)
+
+                    for target_name in selected_targets:
+                        if target_name not in bundle["models"]:
+                            raise ValueError(f"Saved artifact has no fitted model for {target_name}.")
+                        df_predicted[f"Predicted_{target_name}"] = bundle["models"][target_name].predict(X_batch)
+
+                    st.success("Batch prediction completed for: " + ", ".join(selected_targets))
+                    st.dataframe(df_predicted.head(10), use_container_width=True)
+
+                    csv_data = df_predicted.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        label="📥 Download Predictions CSV",
+                        data=csv_data,
+                        file_name="predicted_dataset_results.csv",
+                        mime="text/csv",
+                    )
+                except Exception as error:
+                    st.error(f"Error during batch prediction execution: {error}")
+
+
+# =============================================================================
+# PAGE 2: EXPLORATORY ANALYTICS & TRENDS
+# =============================================================================
+
+elif menu == "📈 2. Exploratory Analytics & Trends":
+
+    st.header("📈 Market Insights & Historical Data Visualizations")
+    st.markdown("---")
+
+    if not df_data.empty:
+        map_col, box_col = st.columns(2, gap="large")
+
+        with map_col:
+            st.subheader("🗺️ Geospatial Market Price Map")
+            st.write("Interactive map showing market monitoring locations across Ethiopia.")
+
+            if {"latitude", "longitude", "price"}.issubset(df_data.columns):
+                map_df = df_data.dropna(subset=["latitude", "longitude", "price"])
+
+                if not map_df.empty:
+                    fig_map = px.scatter_geo(
+                        map_df.sample(min(len(map_df), 2000)),
+                        lat="latitude",
+                        lon="longitude",
+                        color="price",
+                        size="price",
+                        hover_name="market" if "market" in map_df.columns else None,
+                        hover_data=[col for col in ["admin1", "commodity"] if col in map_df.columns],
+                        color_continuous_scale=px.colors.sequential.Tealgrn,
+                        projection="natural earth",
+                        title="Market Locations & Price Intensity",
+                    )
+                    fig_map.update_geos(
+                        center={"lat": 9.145, "lon": 40.489},
+                        projection_scale=7,
+                        showcountries=True,
+                        countrycolor="gray",
+                    )
+                    fig_map.update_layout(margin={"r": 0, "t": 40, "l": 0, "b": 0}, height=400)
+                    st.plotly_chart(fig_map, use_container_width=True)
+                else:
+                    st.info("No valid geographical records are available.")
+            else:
+                st.info("Latitude, longitude, and price columns are required.")
+
+        with box_col:
+            st.subheader("📊 Regional Price Distributions")
+            st.write("Price variance and outliers across administrative regions.")
+
+            if {"admin1", "price"}.issubset(df_data.columns):
+                box_data = df_data.dropna(subset=["admin1", "price"])
+                fig_box = px.box(
+                    box_data,
+                    x="admin1",
+                    y="price",
+                    color="admin1",
+                    title="Price Spread by Region",
+                    labels={"admin1": "Region", "price": "Price (ETB)"},
+                )
+                fig_box.update_layout(showlegend=False, margin={"r": 0, "t": 40, "l": 0, "b": 0}, height=400)
+                st.plotly_chart(fig_box, use_container_width=True)
+            else:
+                st.info("Admin1 and price columns are required for the box plot.")
+
+        st.markdown("---")
+        st.subheader("📉 Historical Staple Price Trends Over Time")
+        st.write("Long-term monthly average price evolution for core food commodities.")
+
+        if {"date", "commodity", "price"}.issubset(df_data.columns):
+            valid_trend_data = df_data.dropna(subset=["date", "commodity", "price"]).copy()
+            trend_df = (
+                valid_trend_data.groupby([valid_trend_data["date"].dt.to_period("M"), "commodity"])["price"]
+                .mean()
+                .reset_index()
+            )
+            trend_df["date"] = trend_df["date"].dt.to_timestamp()
+
+            major_staples = ["Maize (white)", "Wheat", "Sorghum", "Rice", "Teff"]
+            available_staples = [s for s in major_staples if s in trend_df["commodity"].unique()]
+            if not available_staples:
+                available_staples = trend_df["commodity"].drop_duplicates().head(4).tolist()
+
+            filtered_trend = trend_df[trend_df["commodity"].isin(available_staples)]
+            fig_trend = px.line(
+                filtered_trend,
+                x="date",
+                y="price",
+                color="commodity",
+                title="Monthly Average Price Trend (ETB)",
+                labels={"price": "Price in ETB", "date": "Date"},
+            )
+            fig_trend.update_layout(height=450, margin={"r": 0, "t": 40, "l": 0, "b": 0})
+            st.plotly_chart(fig_trend, use_container_width=True)
+        else:
+            st.info("Date, commodity, and price columns are required for trend analysis.")
+    else:
+        st.info("No dataset is currently available for visualization.")
+
+
+# =============================================================================
+# PAGE 3: INTERACTIVE PREDICTION ENGINE
+# =============================================================================
+
+elif menu == "🎯 3. Interactive Prediction Engine":
+
+    st.header("🎯 Real-Time Market Price Inference")
+    st.markdown("Select geographic, market, and commodity parameters below to evaluate predicted food prices.")
+
+    if df_data.empty:
+        st.error("The dataset is empty or invalid.")
+        st.stop()
