@@ -371,7 +371,7 @@ st.markdown(
 )
 
 # =============================================================================
-# NAVIGATION AND DEFAULT TRAINING DATA
+# NAVIGATION AND DATA UPLOAD
 # =============================================================================
 
 st.sidebar.markdown("### Navigation Menu")
@@ -382,20 +382,18 @@ menu = st.sidebar.radio(
         "📊 1. Data Overview & Market Signals",
         "📈 2. Exploratory Analytics & Trends",
         "🎯 3. Interactive Prediction Engine",
-        "📦 4. Batch Prediction",
     ],
     label_visibility="collapsed",
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption(
-    "The dashboard uses the training dataset stored with the application. "
-    "A separate file is requested only on the Batch Prediction page."
+
+uploaded_file = st.sidebar.file_uploader(
+    "📁 Upload Custom Dataset",
+    type=["xlsx", "csv"],
 )
 
-# Load the existing project dataset automatically.
-# Keep wfp_food_prices_et.xlsx in the same folder as app.py when deploying.
-df_data = load_dataset()
+df_data = load_dataset(uploaded_file)
 
 
 # =============================================================================
@@ -537,125 +535,98 @@ if menu == "📊 1. Data Overview & Market Signals":
     else:
         st.warning("No valid dataset is currently available.")
 
-# =============================================================================
-# PAGE 4: BATCH PREDICTION
-# =============================================================================
-
-elif menu == "📦 4. Batch Prediction":
-
-    st.header("📦 Batch Price & USD Price Prediction")
-    st.write(
-        "Upload a separate CSV or Excel dataset to generate predictions "
-        "for multiple records. This upload is used only on this page and "
-        "does not replace the dashboard's original training dataset."
-    )
-
     st.markdown("---")
-
-    batch_file = st.file_uploader(
-        "📁 Upload data for batch prediction",
-        type=["csv", "xlsx"],
-        key="batch_prediction_file",
-        help="Upload a CSV or Excel file containing the required WFP dataset columns."
+    st.subheader("🔮 Batch Price & USD Price Prediction")
+    st.write(
+        "Run the trained machine learning model across all records "
+        "in your uploaded dataset."
     )
 
-    if batch_file is None:
-        st.info(
-            "Please upload a CSV or Excel file to begin batch prediction. "
-            "Your overview, visualizations, and single-record prediction "
-            "remain available without this upload."
+    if uploaded_file is None:
+        st.warning(
+            "⚠️ **Upload Required:** Upload a custom dataset using "
+            "the sidebar uploader to enable batch predictions."
         )
+
+    elif df_data.empty:
+        st.error(
+            "The uploaded dataset could not be loaded or does not "
+            "contain the required columns."
+        )
+
     else:
-        batch_df = load_dataset(batch_file)
+        st.success(
+            f"📁 Active custom file loaded: **{uploaded_file.name}**"
+        )
 
-        if batch_df.empty:
-            st.error(
-                "The uploaded dataset could not be loaded. Check that it "
-                "contains the required columns and valid dates."
-            )
-        else:
-            st.success(
-                f"Successfully loaded: **{batch_file.name}** "
-                f"({len(batch_df):,} records)"
-            )
+        selected_targets = st.multiselect(
+            "Select prediction targets",
+            TARGET_COLUMNS,
+            default=TARGET_COLUMNS,
+            key="batch_target_selector",
+        )
 
-            preview_col1, preview_col2, preview_col3 = st.columns(3)
-            preview_col1.metric("Records", f"{len(batch_df):,}")
-            preview_col2.metric("Commodities", f"{batch_df['commodity'].nunique():,}")
-            preview_col3.metric("Regions", f"{batch_df['admin1'].nunique():,}")
+        st.caption(
+            "The uploaded price/usdprice values are not model inputs; "
+            "each target is predicted independently."
+        )
 
-            with st.expander("Preview uploaded dataset"):
-                st.dataframe(
-                    batch_df.head(20),
-                    use_container_width=True
+        if st.button("🚀 Run Batch Prediction with Model"):
+            bundle, error_msg = load_model_assets()
+
+            if error_msg:
+                st.error(
+                    f"Could not load model pipelines: {error_msg}"
                 )
 
-            selected_targets = st.multiselect(
-                "Select prediction targets",
-                TARGET_COLUMNS,
-                default=TARGET_COLUMNS,
-                key="batch_target_selector",
-            )
+            elif not selected_targets:
+                st.warning(
+                    "Select at least one target: price and/or usdprice."
+                )
 
-            st.caption(
-                "The uploaded price/usdprice values are not model inputs; "
-                "each selected target is predicted independently."
-            )
+            else:
+                try:
+                    df_predicted = df_data.copy()
+                    X_batch = prepare_model_features(df_predicted)
 
-            if st.button(
-                "🚀 Run Batch Prediction with Model",
-                key="run_batch_prediction"
-            ):
-                bundle, error_msg = load_model_assets()
-
-                if error_msg:
-                    st.error(f"Could not load model pipelines: {error_msg}")
-                elif not selected_targets:
-                    st.warning(
-                        "Select at least one target: price and/or usdprice."
-                    )
-                else:
-                    try:
-                        df_predicted = batch_df.copy()
-                        X_batch = prepare_model_features(df_predicted)
-
-                        for target_name in selected_targets:
-                            if target_name not in bundle["models"]:
-                                raise ValueError(
-                                    f"Saved artifact has no fitted model "
-                                    f"for {target_name}."
-                                )
-
-                            df_predicted[f"Predicted_{target_name}"] = (
-                                bundle["models"][target_name].predict(X_batch)
+                    for target_name in selected_targets:
+                        if target_name not in bundle["models"]:
+                            raise ValueError(
+                                f"Saved artifact has no fitted model "
+                                f"for {target_name}."
                             )
 
-                        st.success(
-                            "Batch prediction completed for: "
-                            + ", ".join(selected_targets)
+                        df_predicted[
+                            f"Predicted_{target_name}"
+                        ] = bundle["models"][target_name].predict(
+                            X_batch
                         )
 
-                        st.dataframe(
-                            df_predicted.head(20),
-                            use_container_width=True
-                        )
+                    st.success(
+                        "Batch prediction completed for: "
+                        + ", ".join(selected_targets)
+                    )
 
-                        csv_data = df_predicted.to_csv(
-                            index=False
-                        ).encode("utf-8")
+                    st.dataframe(
+                        df_predicted.head(10),
+                        use_container_width=True,
+                    )
 
-                        st.download_button(
-                            label="📥 Download Predictions CSV",
-                            data=csv_data,
-                            file_name="predicted_dataset_results.csv",
-                            mime="text/csv",
-                            key="download_batch_predictions",
-                        )
+                    csv_data = df_predicted.to_csv(
+                        index=False
+                    ).encode("utf-8")
 
-                    except Exception as error:
-                        st.error(
-                            f"Error during batch prediction execution: {error}"
-                        )
+                    st.download_button(
+                        label="📥 Download Predictions CSV",
+                        data=csv_data,
+                        file_name="predicted_dataset_results.csv",
+                        mime="text/csv",
+                    )
+
+                except Exception as error:
+                    st.error(
+                        f"Error during batch prediction execution: {error}"
+                    )
 
 
 # =============================================================================
