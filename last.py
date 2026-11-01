@@ -182,18 +182,13 @@ def load_model_assets():
 
 
 # =============================================================================
-# DATASET LOADER (SAFE FALLBACK FOR DASHBOARD)
+# DATASET LOADER (STABLE DEFAULT DATA FOR DASHBOARD)
 # =============================================================================
 
 @st.cache_data
-def load_dataset(uploaded_file=None):
+def load_dataset():
     try:
-        if uploaded_file is not None:
-            if uploaded_file.name.lower().endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-        elif os.path.exists("wfp_food_prices_et.xlsx"):
+        if os.path.exists("wfp_food_prices_et.xlsx"):
             df = pd.read_excel("wfp_food_prices_et.xlsx")
         else:
             excel_files = [
@@ -373,11 +368,12 @@ menu = st.sidebar.radio(
 st.sidebar.markdown("---")
 
 uploaded_file = st.sidebar.file_uploader(
-    "📁 Upload Custom Dataset",
+    "📁 Upload Custom Dataset (Required for Batch Prediction)",
     type=["xlsx", "csv"],
 )
 
-df_data = load_dataset(uploaded_file)
+# Main dashboard dataset is always safe and stable
+df_data = load_dataset()
 
 
 # =============================================================================
@@ -503,14 +499,13 @@ if menu == "📊 1. Data Overview & Market Signals":
         "in your uploaded dataset."
     )
 
-    # Isolated Batch Prediction Check (Warning & Mismatch Error shown ONLY here)
+    # Isolated Batch Prediction Check (Errors/Warnings shown ONLY here)
     if uploaded_file is None:
         st.warning(
             "⚠️ **Upload Required:** Upload a custom dataset using "
             "the sidebar uploader to enable batch predictions."
         )
     else:
-        # Load the custom uploaded file directly to validate its columns for batch prediction
         try:
             if uploaded_file.name.lower().endswith(".csv"):
                 df_uploaded = pd.read_csv(uploaded_file)
@@ -737,118 +732,4 @@ elif menu == "🎯 3. Interactive Prediction Engine":
     st.markdown('<div class="section-header">🛒 2. Commodity Selection</div>', unsafe_allow_html=True)
     category_col, commodity_col, unit_col = st.columns(3, gap="large")
 
-    category_options = get_options(df_data, "category")
-    if not category_options:
-        st.error("No commodity categories were found.")
-        st.stop()
-
-    with category_col:
-        category = st.selectbox(
-            "Commodity Category",
-            options=category_options,
-            key="prediction_category",
-            on_change=reset_prediction_children,
-            args=("prediction_commodity", "prediction_unit"),
-        )
-
-    commodity_options = get_options(df_data, "commodity", filters={"category": category})
-    if not commodity_options:
-        st.warning("No commodities are recorded for the selected category.")
-        st.stop()
-
-    with commodity_col:
-        commodity = st.selectbox(
-            "Commodity Name",
-            options=commodity_options,
-            key="prediction_commodity",
-            on_change=reset_prediction_children,
-            args=("prediction_unit",),
-        )
-
-    unit_options = get_options(df_data, "unit", filters={"category": category, "commodity": commodity})
-    if not unit_options:
-        st.warning("No measurement units are recorded for the selected commodity.")
-        st.stop()
-
-    with unit_col:
-        unit = st.selectbox("Measurement Unit", options=unit_options, key="prediction_unit")
-
-    st.markdown('<div class="section-header">🏷️ 3. Price Information</div>', unsafe_allow_html=True)
-    status_col, type_col = st.columns(2, gap="large")
-
-    priceflag_options = get_options(df_data, "priceflag")
-    pricetype_options = get_options(df_data, "pricetype")
-
-    if not priceflag_options or not pricetype_options:
-        st.error("Price status or price type values are missing from the dataset.")
-        st.stop()
-
-    with status_col:
-        priceflag = st.selectbox("Price Status", options=priceflag_options, format_func=price_status_label, key="prediction_priceflag")
-
-    with type_col:
-        pricetype = st.selectbox("Price Type", options=pricetype_options, format_func=price_type_label, key="prediction_pricetype")
-
-    st.markdown('<div class="section-header">📅 4. Prediction Date</div>', unsafe_allow_html=True)
-    date_col, currency_col = st.columns(2, gap="large")
-
-    valid_dates = df_data["date"].dropna()
-    default_date = valid_dates.max().date() if not valid_dates.empty else pd.Timestamp("2022-12-15").date()
-
-    with date_col:
-        date_val = st.date_input("Transaction Date", value=default_date, key="prediction_date")
-
-    currency_options = get_options(df_data, "currency")
-    with currency_col:
-        if currency_options:
-            currency = st.selectbox("Currency", options=currency_options, key="prediction_currency", disabled=True)
-        else:
-            currency = "ETB"
-            st.text_input("Currency", value=currency, disabled=True)
-
-    st.markdown("---")
-    if st.button("🚀 Predict Market Price", key="run_market_prediction"):
-        bundle, error_msg = load_model_assets()
-        if error_msg:
-            st.error(f"Could not process prediction. Serialized assets error: {error_msg}")
-        else:
-            try:
-                input_row = pd.DataFrame([{
-                    "admin1": admin1,
-                    "admin2": admin2,
-                    "market": market,
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "category": category,
-                    "commodity": commodity,
-                    "unit": unit,
-                    "priceflag": priceflag,
-                    "pricetype": pricetype,
-                    "date": pd.to_datetime(date_val),
-                }])
-                X_input = prepare_model_features(input_row)
-
-                if "price" not in bundle["models"]:
-                    raise ValueError("The saved model bundle does not contain a fitted price prediction model.")
-
-                prediction = bundle["models"]["price"].predict(X_input)[0]
-                st.success(f"✨ Predicted Local Market Price: **{prediction:,.2f} {currency}**")
-
-                with st.expander("📋 View Selected Prediction Parameters"):
-                    display_row = input_row.copy()
-                    display_row["currency"] = currency
-                    st.dataframe(display_row, use_container_width=True)
-
-                with st.expander("📌 View Model Training & Test Performance Metrics"):
-                    if "price" in bundle["metrics"] and isinstance(bundle["metrics"]["price"], dict):
-                        price_metrics = bundle["metrics"]["price"]
-                        m1, m2, m3, m4 = st.columns(4)
-                        m1.metric("Training R² Score", f"{price_metrics['train_r2']:.4f}")
-                        m2.metric("Testing R² Score", f"{price_metrics['test_r2']:.4f}")
-                        m3.metric("Testing RMSE", f"{price_metrics['test_rmse']:.4f}")
-                        m4.metric("Overfit Gap", f"{price_metrics['overfit_gap']:.4f}")
-                    else:
-                        st.info("Price model evaluation metrics are not available in the saved bundle.")
-
-            except Exception as error:
-                st.error(f"Error processing prediction parameters: {error}")
+    category_options = get_options(df_data
