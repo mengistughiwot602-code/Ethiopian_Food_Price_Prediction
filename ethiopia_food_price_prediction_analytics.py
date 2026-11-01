@@ -154,7 +154,7 @@ def load_model_assets():
         return None, str(error)
 
 # =============================================================================
-# BUILT-IN SAMPLE DATASET (Ensures app works instantly without local files)
+# BUILT-IN SAMPLE DATASET
 # =============================================================================
 
 def get_sample_dataset():
@@ -351,3 +351,110 @@ if menu == "📊 1. Data Overview & Market Signals":
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
+        st.metric(
+            "🧾 Total Recorded Transactions",
+            f"{len(df_data):,}" if not df_data.empty else "0",
+        )
+
+    with col2:
+        st.metric(
+            "🏛️ Covered Regions (Admin1)",
+            str(df_data["admin1"].nunique())
+            if not df_data.empty and "admin1" in df_data.columns
+            else "0",
+        )
+
+    with col3:
+        st.metric(
+            "🌾 Unique Commodities",
+            str(df_data["commodity"].nunique())
+            if not df_data.empty and "commodity" in df_data.columns
+            else "0",
+        )
+
+    with col4:
+        st.metric(
+            "🏷️ Total Columns",
+            len(df_data.columns) if not df_data.empty else "0",
+        )
+
+    st.markdown("---")
+
+    if not df_data.empty:
+        col_left, col_right = st.columns([2, 1], gap="large")
+
+        with col_left:
+            tab1, tab2 = st.tabs(["🛒 Top Commodities", "🌍 Regional Volume"])
+
+            with tab1:
+                st.caption("Ranked by frequency and average price.")
+                if {"commodity", "price"}.issubset(df_data.columns):
+                    comm_summary = (
+                        df_data.groupby("commodity")
+                        .agg(
+                            Transactions=("price", "count"),
+                            Avg_Price=("price", "mean"),
+                        )
+                        .reset_index()
+                        .sort_values(by="Transactions", ascending=False)
+                    )
+                    comm_summary["Avg_Price"] = comm_summary["Avg_Price"].round(2)
+                    st.dataframe(
+                        comm_summary.head(10),
+                        use_container_width=True,
+                        height=300,
+                    )
+                else:
+                    st.info("Commodity or price column missing.")
+
+            with tab2:
+                st.caption("Distribution across administrative regions.")
+                if {"admin1", "price"}.issubset(df_data.columns):
+                    reg_summary = (
+                        df_data.groupby("admin1")
+                        .agg(
+                            Transactions=("price", "count"),
+                            Avg_Price=("price", "mean"),
+                        )
+                        .reset_index()
+                        .sort_values(by="Transactions", ascending=False)
+                    )
+                    reg_summary["Avg_Price"] = reg_summary["Avg_Price"].round(2)
+                    st.dataframe(
+                        reg_summary,
+                        use_container_width=True,
+                        height=300,
+                    )
+                else:
+                    st.info("Admin1 or price column missing.")
+
+        with col_right:
+            st.markdown("#### 🔍 Data Scope & Quality")
+            st.caption("Record audit and memory statistics.")
+
+            if "date" in df_data.columns:
+                min_date = df_data["date"].min()
+                max_date = df_data["date"].max()
+                if pd.notna(min_date) and pd.notna(max_date):
+                    st.metric(
+                        "📅 Temporal Span",
+                        f"{min_date.strftime('%Y-%m')} to {max_date.strftime('%Y-%m')}",
+                    )
+                else:
+                    st.metric("📅 Temporal Span", "N/A")
+
+            st.metric("🧹 Total Missing Cells", int(df_data.isna().sum().sum()))
+            st.metric("💾 Memory Footprint", f"{df_data.memory_usage(deep=True).sum() / (1024*1024):.2f} MB")
+            st.metric("✨ Duplicate Rows", int(df_data.duplicated().sum()))
+
+    else:
+        st.warning("No valid dataset is currently available.")
+
+    st.markdown("---")
+    st.subheader("🔮 Batch Price & USD Price Prediction")
+    st.write(
+        "Upload a custom dataset file below **strictly for batch prediction**."
+    )
+
+    batch_uploaded_file = st.file_uploader(
+        "📁 Upload Custom Dataset for
