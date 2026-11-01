@@ -182,7 +182,7 @@ def load_model_assets():
 
 
 # =============================================================================
-# DATASET LOADER (SAFE FALLBACK)
+# DATASET LOADER (SAFE FALLBACK FOR DASHBOARD)
 # =============================================================================
 
 @st.cache_data
@@ -206,7 +206,6 @@ def load_dataset(uploaded_file=None):
                 df = pd.DataFrame()
 
         if not df.empty:
-            # Clean metadata rows if present
             metadata_mask = df.astype(str).apply(
                 lambda column: column.str.strip().str.startswith("#")
             ).any(axis=1)
@@ -223,7 +222,6 @@ def load_dataset(uploaded_file=None):
                     df[column] = pd.to_numeric(df[column], errors="coerce")
 
         if df.empty or not all(col in df.columns for col in ["date", "price", "admin1", "commodity"]):
-            # Fallback default dataset so overview & charts stay active
             df = pd.DataFrame({
                 "date": pd.date_range(start="2020-01-01", periods=10, freq="M"),
                 "admin1": ["Addis Ababa"] * 10,
@@ -245,7 +243,6 @@ def load_dataset(uploaded_file=None):
         return df
 
     except Exception:
-        # Graceful fallback on error
         df_fallback = pd.DataFrame({
             "date": pd.date_range(start="2020-01-01", periods=10, freq="M"),
             "admin1": ["Addis Ababa"] * 10,
@@ -262,6 +259,7 @@ def load_dataset(uploaded_file=None):
             "usdprice": [20.0, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.8, 20.9],
             "currency": ["ETB"] * 10
         })
+        df_fallback.columns = [c.lower() for c in df_fallback.columns]
         df_fallback["date"] = pd.to_datetime(df_fallback["date"], errors="coerce")
         return df_fallback
 
@@ -505,64 +503,74 @@ if menu == "📊 1. Data Overview & Market Signals":
         "in your uploaded dataset."
     )
 
-    # Isolated Feature Validation Check for Batch Prediction Only
+    # Isolated Batch Prediction Check (Warning & Mismatch Error shown ONLY here)
     if uploaded_file is None:
-        st.info(
-            "ℹ️ **Note:** Using default built-in sample data. "
-            "Upload a custom dataset using the sidebar to run batch predictions."
+        st.warning(
+            "⚠️ **Upload Required:** Upload a custom dataset using "
+            "the sidebar uploader to enable batch predictions."
         )
     else:
-        # Check if the uploaded file contains all required columns
-        missing_batch_cols = [col for col in REQUIRED_DATA_COLUMNS if col not in df_data.columns]
-        if missing_batch_cols:
-            st.error(
-                f"⚠️ **Feature Mismatch Error:** The uploaded custom dataset is missing "
-                f"required columns for batch prediction: `{missing_batch_cols}`"
-            )
-        else:
-            st.success(f"📁 Active custom file loaded successfully: **{uploaded_file.name}**")
+        # Load the custom uploaded file directly to validate its columns for batch prediction
+        try:
+            if uploaded_file.name.lower().endswith(".csv"):
+                df_uploaded = pd.read_csv(uploaded_file)
+            else:
+                df_uploaded = pd.read_excel(uploaded_file)
+            
+            df_uploaded.columns = df_uploaded.columns.astype(str).str.strip().str.lower()
+            missing_batch_cols = [col for col in REQUIRED_DATA_COLUMNS if col not in df_uploaded.columns]
+            
+            if missing_batch_cols:
+                st.error(
+                    f"⚠️ **Feature Mismatch Error:** The uploaded custom dataset is missing "
+                    f"required columns for batch prediction: `{missing_batch_cols}`"
+                )
+            else:
+                st.success(f"📁 Active custom file loaded: **{uploaded_file.name}**")
 
-            selected_targets = st.multiselect(
-                "Select prediction targets",
-                TARGET_COLUMNS,
-                default=TARGET_COLUMNS,
-                key="batch_target_selector",
-            )
+                selected_targets = st.multiselect(
+                    "Select prediction targets",
+                    TARGET_COLUMNS,
+                    default=TARGET_COLUMNS,
+                    key="batch_target_selector",
+                )
 
-            st.caption(
-                "The price/usdprice values are not model inputs; "
-                "each target is predicted independently."
-            )
+                st.caption(
+                    "The price/usdprice values are not model inputs; "
+                    "each target is predicted independently."
+                )
 
-            if st.button("🚀 Run Batch Prediction with Model"):
-                bundle, error_msg = load_model_assets()
+                if st.button("🚀 Run Batch Prediction with Model"):
+                    bundle, error_msg = load_model_assets()
 
-                if error_msg:
-                    st.error(f"Could not load model pipelines: {error_msg}")
-                elif not selected_targets:
-                    st.warning("Select at least one target: price and/or usdprice.")
-                else:
-                    try:
-                        df_predicted = df_data.copy()
-                        X_batch = prepare_model_features(df_predicted)
+                    if error_msg:
+                        st.error(f"Could not load model pipelines: {error_msg}")
+                    elif not selected_targets:
+                        st.warning("Select at least one target: price and/or usdprice.")
+                    else:
+                        try:
+                            df_predicted = df_uploaded.copy()
+                            X_batch = prepare_model_features(df_predicted)
 
-                        for target_name in selected_targets:
-                            if target_name not in bundle["models"]:
-                                raise ValueError(f"Saved artifact has no fitted model for {target_name}.")
-                            df_predicted[f"Predicted_{target_name}"] = bundle["models"][target_name].predict(X_batch)
+                            for target_name in selected_targets:
+                                if target_name not in bundle["models"]:
+                                    raise ValueError(f"Saved artifact has no fitted model for {target_name}.")
+                                df_predicted[f"Predicted_{target_name}"] = bundle["models"][target_name].predict(X_batch)
 
-                        st.success("Batch prediction completed successfully!")
-                        st.dataframe(df_predicted.head(10), use_container_width=True)
+                            st.success("Batch prediction completed successfully!")
+                            st.dataframe(df_predicted.head(10), use_container_width=True)
 
-                        csv_data = df_predicted.to_csv(index=False).encode("utf-8")
-                        st.download_button(
-                            label="📥 Download Predictions CSV",
-                            data=csv_data,
-                            file_name="predicted_dataset_results.csv",
-                            mime="text/csv",
-                        )
-                    except Exception as error:
-                        st.error(f"Error during batch prediction execution: {error}")
+                            csv_data = df_predicted.to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="📥 Download Predictions CSV",
+                                data=csv_data,
+                                file_name="predicted_dataset_results.csv",
+                                mime="text/csv",
+                            )
+                        except Exception as error:
+                            st.error(f"Error during batch prediction execution: {error}")
+        except Exception as err:
+            st.error(f"Could not read uploaded file: {err}")
 
 
 # =============================================================================
