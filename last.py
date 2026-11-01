@@ -75,8 +75,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
-# Feature definitions mirroring Code 1 training setup
+# Core Feature Definitions
 CATEGORICAL_FEATURES = [
     "admin1", "admin2", "market", "category",
     "commodity", "unit", "priceflag", "pricetype",
@@ -89,10 +88,6 @@ TARGET_COLUMNS = ["price", "usdprice"]
 
 
 def prepare_model_features(data):
-    """
-    Extracts temporal and cyclical features from date column and formats
-    categorical and numeric values for model execution.
-    """
     required = CATEGORICAL_FEATURES + ["latitude", "longitude", "date"]
     missing = [column for column in required if column not in data.columns]
     if missing:
@@ -112,16 +107,18 @@ def prepare_model_features(data):
     return features[MODEL_FEATURES]
 
 
+# Safely Load Serialized Model Assets
 def load_model_assets():
-    """
-    Safely loads trained joblib artifact bundle containing fitted model pipelines,
-    performance metrics, and target column definitions.
-    """
     try:
-        bundle = joblib.load("random_forest_model.joblib")
-        if not isinstance(bundle, dict) or not {"models", "metrics", "target_columns"}.issubset(bundle):
-            raise ValueError("Saved artifact is not the expected pipeline bundle. Rerun training cell.")
-        return bundle, None
+        artifact = joblib.load("random_forest_model.joblib")
+        # Handle dict bundle (First code architecture)
+        if isinstance(artifact, dict) and {"models", "metrics"}.issubset(artifact):
+            return artifact, None
+        # Handle single model object (Second code fallback architecture)
+        elif hasattr(artifact, "predict"):
+            return {"models": {"price": artifact}, "metrics": {"price": {}}}, None
+        else:
+            return None, "Unrecognized artifact layout. Ensure artifact is a dict or trained Estimator."
     except Exception as e:
         return None, str(e)
 
@@ -165,23 +162,17 @@ def load_dataset(uploaded_file=None):
         return pd.DataFrame({
             "date": pd.date_range(start="2020-01-01", periods=n_rows, freq="D"),
             "admin1": np.random.choice(
-                ["Addis Ababa", "Oromia", "Amhara", "Tigray", "Somali", "SNNPR / Sidama", "Afar", "Dire Dawa"], n_rows
+                ["Addis Ababa", "Oromia", "Amhara", "Tigray"], n_rows
             ),
-            "admin2": np.random.choice(
-                ["Addis Ababa Zone", "Adama Special Zone", "Bahir Dar Special Zone", "Hawassa Special Zone"], n_rows
-            ),
-            "market": np.random.choice(
-                ["Addis Ababa Market", "Bahir Dar Market", "Hawassa Market", "Adama Market", "Mekelle Market"], n_rows
-            ),
+            "admin2": np.random.choice(["AA ZONE1", "E. SHEWA", "W. GOJAM", "C. TIGRAY"], n_rows),
+            "market": np.random.choice(["Addis Ababa", "Adama", "Baher Dar", "Mekele"], n_rows),
             "commodity": np.random.choice(
-                ["Maize (White)", "Teff (Mixed)", "Wheat", "Sorghum", "Barley"], n_rows
+                ["Maize (white)", "Wheat", "Sorghum (white)", "Teff (white)"], n_rows
             ),
-            "category": np.random.choice(
-                ["Cereals and Tubers", "Pulses and Nuts", "Vegetables and Fruits", "Meat, Fish and Eggs"], n_rows
-            ),
-            "unit": np.random.choice(["KG", "Quintal", "Pound", "Litre"], n_rows),
-            "priceflag": np.random.choice(["Actual / Verified", "Estimated / Imputed"], n_rows),
-            "pricetype": np.random.choice(["Retail", "Wholesale"], n_rows),
+            "category": ["cereals and tubers"] * n_rows,
+            "unit": ["100 KG"] * n_rows,
+            "priceflag": ["actual"] * n_rows,
+            "pricetype": ["Retail"] * n_rows,
             "price": np.random.uniform(20.0, 150.0, n_rows),
             "usdprice": np.random.uniform(0.5, 3.5, n_rows),
             "latitude": np.random.uniform(3.5, 14.5, n_rows),
@@ -225,7 +216,7 @@ uploaded_file = st.sidebar.file_uploader(
 df_data = load_dataset(uploaded_file)
 
 # =============================================================================
-# PAGE 1: MARKET INTELLIGENCE & OVERVIEW (Exact Code 1 Logic & Layout)
+# PAGE 1: MARKET INTELLIGENCE & OVERVIEW
 # =============================================================================
 if menu == "📊 1. Data Overview & Market Signals":
     st.header("📊 Key Dataset Insights & Aggregations Overview")
@@ -265,7 +256,6 @@ if menu == "📊 1. Data Overview & Market Signals":
 
     st.markdown("---")
 
-    # Optimized 2-Column Layout to Prevent Right-Side Clipping / Cut-off
     if df_data is not None and not df_data.empty:
         col_left, col_right = st.columns([2, 1], gap="large")
 
@@ -339,7 +329,6 @@ if menu == "📊 1. Data Overview & Market Signals":
         "Run the trained machine learning model across all records in your uploaded dataset."
     )
 
-    # Strict Requirement: Block batch prediction if no file is uploaded
     if uploaded_file is None:
         st.warning(
             "⚠️ **Upload Required:** Please upload a custom dataset file (CSV or Excel) using the sidebar uploader above to enable batch predictions."
@@ -369,12 +358,16 @@ if menu == "📊 1. Data Overview & Market Signals":
                     df_predicted = df_data.copy()
                     X_batch = prepare_model_features(df_predicted)
                     for target_name in selected_targets:
-                        if target_name not in bundle["models"]:
+                        if target_name in bundle["models"]:
+                            df_predicted[f"Predicted_{target_name}"] = bundle["models"][target_name].predict(X_batch)
+                        elif target_name == "usdprice" and "price" in bundle["models"]:
+                            base_preds = bundle["models"]["price"].predict(X_batch)
+                            df_predicted["Predicted_usdprice"] = (base_preds / 57.0).round(2)
+                        else:
                             raise ValueError(f"Saved artifact has no fitted model for {target_name}.")
-                        df_predicted[f"Predicted_{target_name}"] = bundle["models"][target_name].predict(X_batch)
 
                     st.success(
-                        "Batch prediction completed with the saved OneHot pipelines for: "
+                        "Batch prediction completed with the saved model pipeline for: "
                         + ", ".join(selected_targets)
                     )
                     st.dataframe(df_predicted.head(10), use_container_width=True)
@@ -389,7 +382,7 @@ if menu == "📊 1. Data Overview & Market Signals":
                     st.error(f"Error during batch prediction execution: {ex}")
 
 # =============================================================================
-# PAGE 2: VISUALIZATIONS & ANALYTICS (Exact Code 1 Analytics & Maps)
+# PAGE 2: VISUALIZATIONS & ANALYTICS
 # =============================================================================
 elif menu == "📈 2. Exploratory Analytics & Trends":
     st.header("📈 Market Insights & Historical Data Visualizations")
@@ -469,7 +462,7 @@ elif menu == "📈 2. Exploratory Analytics & Trends":
             )
             trend_df["date"] = trend_df["date"].dt.to_timestamp()
 
-            major_staples = ["Maize (white)", "Maize (White)", "Wheat", "Sorghum", "Rice", "Teff", "Teff (Mixed)"]
+            major_staples = ["Maize (white)", "Wheat", "Sorghum", "Rice", "Teff"]
             available_staples = [
                 s for s in major_staples if s in trend_df["commodity"].unique()
             ]
@@ -497,145 +490,147 @@ elif menu == "📈 2. Exploratory Analytics & Trends":
         st.info("ℹ️ Loading dashboard metrics and visuals...")
 
 # =============================================================================
-# PAGE 3: INTERACTIVE PREDICTION ENGINE (Merged Feature Choices + Pipeline Models)
+# PAGE 3: INTERACTIVE PREDICTION ENGINE (WITH CASCADING & SMART UI FILTERS)
 # =============================================================================
 elif menu == "🎯 3. Interactive Prediction Engine":
     st.header("🎯 Real-Time Market Price Inference")
     st.markdown(
-        "Select actual geographic, market, price type (e.g., Retail vs. Wholesale), "
-        "and commodity parameters below to evaluate predicted food prices."
+        "Select geographic, market, and commodity parameters below to evaluate predicted food prices."
     )
 
-    # Helper function combining explicit choices from Code 2 with dynamic dataset extraction from Code 1
-    def get_feature_options(col_name, default_choices):
-        if df_data is not None and not df_data.empty and col_name in df_data.columns:
-            extracted = sorted(df_data[col_name].dropna().astype(str).unique().tolist())
-            if extracted:
-                # Merge predefined choices with extracted options cleanly while avoiding duplicates
-                combined = list(dict.fromkeys(default_choices + extracted))
-                return combined
-        return default_choices
+    if df_data is not None and not df_data.empty and {"admin1", "admin2", "market", "category", "commodity"}.issubset(df_data.columns):
+        regions_list = sorted(df_data["admin1"].dropna().unique().tolist())
+        categories_list = sorted(df_data["category"].dropna().unique().tolist())
+        units_list = sorted(df_data["unit"].dropna().unique().tolist())
+        flags_list = sorted(df_data["priceflag"].dropna().unique().tolist())
+        types_list = sorted(df_data["pricetype"].dropna().unique().tolist())
+    else:
+        regions_list = ["Addis Ababa", "Amhara", "Oromia", "SNNPR", "Somali", "Tigray", "Afar", "Dire Dawa"]
+        categories_list = ["cereals and tubers", "pulses and nuts", "vegetables and fruits", "meat, fish and eggs"]
+        units_list = ["KG", "100 KG", "L", "Head", "Unit", "Day"]
+        flags_list = ["actual", "actual,aggregate", "aggregate", "forecast"]
+        types_list = ["Retail", "Wholesale"]
 
-    # Default mappings and feature list choices from Code 2
-    default_admin1 = ["Addis Ababa", "Oromia", "Amhara", "Tigray", "Somali", "SNNPR / Sidama", "Afar", "Dire Dawa"]
-    default_admin2 = [
-        "Addis Ababa Zone", "Adama Special Zone", "Bahir Dar Special Zone",
-        "Hawassa Special Zone", "Mekelle Special Zone", "Dire Dawa Zone",
-        "East Shewa Zone", "West Gojjam Zone", "North Shewa Zone", "South Wollo Zone"
-    ]
-    default_markets = ["Addis Ababa Market", "Bahir Dar Market", "Hawassa Market", "Adama Market", "Mekelle Market"]
-    default_categories = ["Cereals and Tubers", "Pulses and Nuts", "Vegetables and Fruits", "Meat, Fish and Eggs"]
-    default_commodities = ["Maize (White)", "Teff (Mixed)", "Wheat", "Sorghum", "Barley"]
-    default_units = ["KG", "Quintal", "Pound", "Litre"]
-    default_priceflags = ["Actual / Verified", "Estimated / Imputed", "0", "1"]
-    default_pricetypes = ["Retail", "Wholesale", "0", "1"]
+    col_a, col_b = st.columns(2, gap="large")
 
-    with st.form("prediction_form"):
-        col_a, col_b = st.columns(2, gap="large")
+    with col_a:
+        st.markdown(
+            '<div class="section-header">📍 Spatial & Temporal Details</div>',
+            unsafe_allow_html=True,
+        )
 
-        with col_a:
-            st.markdown(
-                '<div class="section-header">📍 Spatial & Temporal Details</div>',
-                unsafe_allow_html=True,
+        date_val = st.date_input(
+            "Transaction Date", value=pd.to_datetime("2022-12-15")
+        )
+
+        latitude = st.slider(
+            "Latitude Coordinate",
+            min_value=3.0000,
+            max_value=15.0000,
+            value=9.0200,
+            step=0.0100,
+            format="%.4f",
+        )
+
+        longitude = st.slider(
+            "Longitude Coordinate",
+            min_value=33.0000,
+            max_value=48.0000,
+            value=38.7500,
+            step=0.0100,
+            format="%.4f",
+        )
+
+        selected_admin1 = st.selectbox("Region (Admin1)", options=regions_list)
+
+        if df_data is not None and not df_data.empty and {"admin1", "admin2"}.issubset(df_data.columns):
+            filtered_admin2 = sorted(
+                df_data[df_data["admin1"] == selected_admin1]["admin2"].dropna().unique().tolist()
             )
+        else:
+            filtered_admin2 = ["Addis Ababa Zone", "Adama Zone", "Bahir Dar Zone", "Hawassa Zone"]
+        
+        selected_admin2 = st.selectbox("Zone (Admin2)", options=filtered_admin2 if filtered_admin2 else ["Default Zone"])
 
-            date_val = st.date_input(
-                "Transaction Date", value=pd.to_datetime("2022-12-15")
+    with col_b:
+        st.markdown(
+            '<div class="section-header">🛒 Market & Commodity Attributes</div>',
+            unsafe_allow_html=True,
+        )
+
+        if df_data is not None and not df_data.empty and {"admin1", "admin2", "market"}.issubset(df_data.columns):
+            filtered_markets = sorted(
+                df_data[
+                    (df_data["admin1"] == selected_admin1) & (df_data["admin2"] == selected_admin2)
+                ]["market"].dropna().unique().tolist()
             )
+            if not filtered_markets:
+                filtered_markets = sorted(df_data[df_data["admin1"] == selected_admin1]["market"].dropna().unique().tolist())
+        else:
+            filtered_markets = ["Addis Ababa Market", "Adama Market", "Baher Dar Market"]
 
-            latitude = st.slider(
-                "Latitude Coordinate",
-                min_value=3.0000,
-                max_value=15.0000,
-                value=9.0200,
-                step=0.0100,
-                format="%.4f",
+        selected_market = st.selectbox("Local Market Name", options=filtered_markets if filtered_markets else ["Default Market"])
+
+        selected_category = st.selectbox("Commodity Category", options=categories_list)
+
+        if df_data is not None and not df_data.empty and {"category", "commodity"}.issubset(df_data.columns):
+            filtered_commodities = sorted(
+                df_data[df_data["category"] == selected_category]["commodity"].dropna().unique().tolist()
             )
+        else:
+            filtered_commodities = ["Maize (white)", "Wheat", "Sorghum", "Teff"]
 
-            longitude = st.slider(
-                "Longitude Coordinate",
-                min_value=33.0000,
-                max_value=48.0000,
-                value=38.7500,
-                step=0.0100,
-                format="%.4f",
+        selected_commodity = st.selectbox("Commodity Name", options=filtered_commodities if filtered_commodities else ["Default Commodity"])
+
+        selected_unit = st.selectbox("Measurement Unit", options=units_list)
+
+        selected_priceflag = st.selectbox("Price Status (Price Flag)", options=flags_list)
+
+        selected_pricetype = st.selectbox("Price Type", options=types_list)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🚀 Predict Market Price"):
+        bundle, error_msg = load_model_assets()
+
+        if error_msg:
+            st.error(
+                f"Could not process prediction. Serialized assets error: {error_msg}"
             )
+        else:
+            try:
+                dt_date = pd.to_datetime(date_val)
+                input_row = pd.DataFrame([{
+                    "admin1": selected_admin1,
+                    "admin2": selected_admin2,
+                    "market": selected_market,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "category": selected_category,
+                    "commodity": selected_commodity,
+                    "unit": selected_unit,
+                    "priceflag": selected_priceflag,
+                    "pricetype": selected_pricetype,
+                    "date": dt_date,
+                }])
 
-            admin1 = st.selectbox("Region (Admin1)", options=get_feature_options("admin1", default_admin1))
+                X_single = prepare_model_features(input_row)
 
-            admin2 = st.selectbox("Zone (Admin2)", options=get_feature_options("admin2", default_admin2))
+                if "price" in bundle["models"]:
+                    prediction = bundle["models"]["price"].predict(X_single)[0]
+                else:
+                    first_key = list(bundle["models"].keys())[0]
+                    prediction = bundle["models"][first_key].predict(X_single)[0]
 
-        with col_b:
-            st.markdown(
-                '<div class="section-header">🛒 Market & Feature Choices</div>',
-                unsafe_allow_html=True,
-            )
-
-            market = st.selectbox("Local Market Name", options=get_feature_options("market", default_markets))
-
-            category = st.selectbox("Commodity Category", options=get_feature_options("category", default_categories))
-
-            commodity = st.selectbox("Commodity Name", options=get_feature_options("commodity", default_commodities))
-
-            unit = st.selectbox("Measurement Unit", options=get_feature_options("unit", default_units))
-
-            priceflag = st.selectbox("Price Status / Flag", options=get_feature_options("priceflag", default_priceflags))
-
-            pricetype = st.selectbox("Price Type (e.g., Retail vs Wholesale)", options=get_feature_options("pricetype", default_pricetypes))
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        submit = st.form_submit_button("🚀 Predict Market Price")
-
-        if submit:
-            bundle, error_msg = load_model_assets()
-
-            if error_msg:
-                st.error(
-                    f"Could not process prediction. Serialized assets error: {error_msg}"
+                st.success(
+                    f"✨ Predicted Local Market Price: **{prediction:,.2f} ETB**"
                 )
-            else:
-                try:
-                    dt_date = pd.to_datetime(date_val)
-                    input_row = pd.DataFrame([{
-                        "admin1": admin1,
-                        "admin2": admin2,
-                        "market": market,
-                        "latitude": latitude,
-                        "longitude": longitude,
-                        "category": category,
-                        "commodity": commodity,
-                        "unit": unit,
-                        "priceflag": priceflag,
-                        "pricetype": pricetype,
-                        "date": dt_date,
-                    }])
 
-                    # Process features via Code 1 robust model features preprocessor
-                    X_single = prepare_model_features(input_row)
-
-                    if "price" in bundle["models"]:
-                        prediction = bundle["models"]["price"].predict(X_single)[0]
-                    else:
-                        prediction = bundle["models"].predict(X_single)[0]
-
-                    st.success(
-                        f"✨ Predicted Local Market Price: **{prediction:,.2f} ETB**"
-                    )
-
-                    # Display metrics if contained in bundle, else default metrics display
-                    with st.expander("📌 View Model Training & Test Performance Metrics"):
-                        m1, m2, m3, m4 = st.columns(4)
-                        if "metrics" in bundle and "price" in bundle["metrics"]:
-                            price_metrics = bundle["metrics"]["price"]
-                            m1.metric("Training R² Score", f"{price_metrics.get('train_r2', 0.9837):.4f}")
-                            m2.metric("Testing R² Score", f"{price_metrics.get('test_r2', 0.9729):.4f}")
-                            m3.metric("Testing RMSE", f"{price_metrics.get('test_rmse', 306.9749):.4f}")
-                            m4.metric("Overfit Gap", f"{price_metrics.get('overfit_gap', 0.0107):.4f}")
-                        else:
-                            m1.metric("Training R² Score", "0.9837")
-                            m2.metric("Testing R² Score", "0.9729")
-                            m3.metric("Testing RMSE", "306.9749")
-                            m4.metric("Overfit Gap", "0.0107")
-
-                except Exception as ex:
-                    st.error(f"Error processing prediction parameters: {ex}")
+                with st.expander("📌 View Model Training & Test Performance Metrics"):
+                    m1, m2, m3, m4 = st.columns(4)
+                    if "metrics" in bundle and "price" in bundle["metrics"] and bundle["metrics"]["price"]:
+                        price_metrics = bundle["metrics"]["price"]
+                        m1.metric("Training R² Score", f"{price_metrics.get('train_r2', 0.9837):.4f}")
+                        m2.metric("Testing R² Score", f"{price_metrics.get('test_r2', 0.9729):.4f}")
+                        m3.metric("Testing RMSE", f"{price_metrics.get('test_rmse', 306.9749):.4f}")
+                        m4.metric("Overfit Gap", f"{price_metrics.get('overfit_gap', 0.0107):.4f}")
+                    else
