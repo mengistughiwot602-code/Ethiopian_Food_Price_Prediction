@@ -732,4 +732,32 @@ elif menu == "🎯 3. Interactive Prediction Engine":
     st.markdown('<div class="section-header">🛒 2. Commodity Selection</div>', unsafe_allow_html=True)
     category_col, commodity_col, unit_col = st.columns(3, gap="large")
 
-    category_options = get_options(df_data
+    category_options = get_options(df_data, "category")
+    if not category_options:
+        st.error("No commodity categories were found.")
+        st.stop()
+
+    with category_col:
+        category = st.selectbox(
+            "Commodity Category",
+            options=category_options,
+            key="prediction_category",
+            on_change=reset_prediction_children,
+            args=("prediction_commodity", "prediction_unit"),
+        )
+
+    commodity_options = get_options(df_data, "commodity", filters={"category": category})
+    if not commodity_options:
+        st.warning("No commodities are recorded for the selected category.")
+        st.stop()
+
+    with commodity_col:
+        commodity = st.selectbox(
+            "Commodity Name",
+            options=commodity_options,
+            key="prediction_commodity",
+            on_change=reset_prediction_children,
+            args=("prediction_unit",),
+        )
+
+    unit_options = get_options(df_data,
