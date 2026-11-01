@@ -5,14 +5,20 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-# Configure Page Settings
+# =============================================================================
+# PAGE CONFIGURATION
+# =============================================================================
+
 st.set_page_config(
     page_title="Ethiopia Food Price Prediction & Analytics",
     page_icon="https://flagcdn.com/w80/et.png",
     layout="wide",
 )
 
-# Custom Styling & UI Enhancements
+# =============================================================================
+# CUSTOM STYLING
+# =============================================================================
+
 st.markdown(
     """
     <style>
@@ -25,12 +31,13 @@ st.markdown(
             background-color: #f4f6f9;
         }
 
-        [data-testid="stForm"] {
-            background-color: #ffffff;
-            padding: 2.5rem;
-            border-radius: 16px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
-            border: 1px solid #e2e8f0;
+        .section-header {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #0f766e;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid #ccfbf1;
+            padding-bottom: 0.4rem;
         }
 
         .stSelectbox label, .stDateInput label, .stSlider label {
@@ -45,15 +52,6 @@ st.markdown(
             border-color: #cbd5e1;
         }
 
-        .section-header {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: #0f766e;
-            margin-bottom: 1rem;
-            border-bottom: 2px solid #ccfbf1;
-            padding-bottom: 0.4rem;
-        }
-
         .stButton button {
             background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
             color: white;
@@ -65,6 +63,7 @@ st.markdown(
             box-shadow: 0 4px 6px rgba(13, 148, 136, 0.2);
             transition: all 0.3s ease;
         }
+
         .stButton button:hover {
             background: linear-gradient(135deg, #115e59 0%, #0f766e 100%);
             color: #ffffff;
@@ -75,128 +74,338 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Core Feature Definitions
+# =============================================================================
+# MODEL FEATURES
+# These must remain consistent with the features used during model training.
+# =============================================================================
+
 CATEGORICAL_FEATURES = [
     "admin1", "admin2", "market", "category",
     "commodity", "unit", "priceflag", "pricetype",
 ]
+
 NUMERIC_FEATURES = [
     "latitude", "longitude", "year", "month", "month_sin", "month_cos",
 ]
+
 MODEL_FEATURES = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 TARGET_COLUMNS = ["price", "usdprice"]
 
+REQUIRED_DATA_COLUMNS = [
+    "date", "admin1", "admin2", "market",
+    "latitude", "longitude", "category", "commodity",
+    "unit", "priceflag", "pricetype", "price", "usdprice",
+]
+
+
+# =============================================================================
+# MODEL FEATURE PREPARATION
+# =============================================================================
 
 def prepare_model_features(data):
-    required = CATEGORICAL_FEATURES + ["latitude", "longitude", "date"]
-    missing = [column for column in required if column not in data.columns]
+    required = CATEGORICAL_FEATURES + [
+        "latitude", "longitude", "date"
+    ]
+
+    missing = [
+        column for column in required
+        if column not in data.columns
+    ]
+
     if missing:
-        raise ValueError(f"Uploaded data is missing required model features: {missing}")
+        raise ValueError(
+            f"Uploaded data is missing required model features: {missing}"
+        )
+
     features = data[required].copy()
     dates = pd.to_datetime(features["date"], errors="coerce")
+
     features["year"] = dates.dt.year
     features["month"] = dates.dt.month
-    features["month_sin"] = np.sin(2 * np.pi * features["month"] / 12)
-    features["month_cos"] = np.cos(2 * np.pi * features["month"] / 12)
+
+    features["month_sin"] = np.sin(
+        2 * np.pi * features["month"] / 12
+    )
+
+    features["month_cos"] = np.cos(
+        2 * np.pi * features["month"] / 12
+    )
+
     for column in CATEGORICAL_FEATURES:
         features[column] = features[column].map(
-            lambda value: str(value) if pd.notna(value) else np.nan
+            lambda value: str(value)
+            if pd.notna(value)
+            else np.nan
         )
+
     for column in NUMERIC_FEATURES:
-        features[column] = pd.to_numeric(features[column], errors="coerce")
+        features[column] = pd.to_numeric(
+            features[column],
+            errors="coerce"
+        )
+
     return features[MODEL_FEATURES]
 
 
-# Safely Load Serialized Model Assets
+# =============================================================================
+# MODEL LOADER
+# =============================================================================
+
 def load_model_assets():
     try:
-        artifact = joblib.load("random_forest_model.joblib")
-        # Handle dict bundle (First code architecture)
-        if isinstance(artifact, dict) and {"models", "metrics"}.issubset(artifact):
-            return artifact, None
-        # Handle single model object (Second code fallback architecture)
-        elif hasattr(artifact, "predict"):
-            return {"models": {"price": artifact}, "metrics": {"price": {}}}, None
-        else:
-            return None, "Unrecognized artifact layout. Ensure artifact is a dict or trained Estimator."
-    except Exception as e:
-        return None, str(e)
+        bundle = joblib.load("random_forest_model.joblib")
+
+        required_keys = {
+            "models",
+            "metrics",
+            "target_columns"
+        }
+
+        if (
+            not isinstance(bundle, dict)
+            or not required_keys.issubset(bundle)
+        ):
+            raise ValueError(
+                "Saved artifact is not the expected pipeline bundle. "
+                "Rerun the training cell."
+            )
+
+        return bundle, None
+
+    except Exception as error:
+        return None, str(error)
 
 
-# Strict Dataset Loader with Validation Check for Custom Uploads
+# =============================================================================
+# DATASET LOADER
+# =============================================================================
+
 @st.cache_data
 def load_dataset(uploaded_file=None):
+
     try:
         if uploaded_file is not None:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file, header=0)
-            else:
-                df = pd.read_excel(uploaded_file, header=0)
 
-            core_features = ["admin1", "commodity", "latitude", "longitude", "price"]
-            matched = sum(1 for f in core_features if f in df.columns)
-            if matched < 2:
-                return pd.DataFrame()  # Empty frame flags invalid structure
+            if uploaded_file.name.lower().endswith(".csv"):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+
         elif os.path.exists("wfp_food_prices_et.xlsx"):
-            df = pd.read_excel("wfp_food_prices_et.xlsx", header=0)
+
+            df = pd.read_excel("wfp_food_prices_et.xlsx")
+
         else:
-            excel_files = [f for f in os.listdir(".") if f.endswith(".xlsx")]
-            if excel_files:
-                df = pd.read_excel(excel_files[0], header=0)
-            else:
-                raise FileNotFoundError("No dataset file found locally.")
+            raise FileNotFoundError(
+                "Dataset file wfp_food_prices_et.xlsx was not found."
+            )
 
-        if len(df) > 0:
-            df = df.drop(0, errors="ignore").reset_index(drop=True)
-        if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        for col in ["price", "usdprice", "latitude", "longitude"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+        # Remove metadata rows containing values such as #date or #adm1+name.
+        metadata_mask = df.astype(str).apply(
+            lambda column: column.str.strip().str.startswith("#")
+        ).any(axis=1)
+
+        df = df.loc[~metadata_mask].copy()
+
+        # Normalize column names.
+        df.columns = (
+            df.columns.astype(str)
+            .str.strip()
+            .str.lower()
+        )
+
+        df.reset_index(drop=True, inplace=True)
+
+        missing_columns = [
+            column for column in REQUIRED_DATA_COLUMNS
+            if column not in df.columns
+        ]
+
+        if missing_columns:
+            raise ValueError(
+                f"Dataset is missing required columns: {missing_columns}"
+            )
+
+        df["date"] = pd.to_datetime(
+            df["date"],
+            errors="coerce"
+        )
+
+        for column in [
+            "price",
+            "usdprice",
+            "latitude",
+            "longitude"
+        ]:
+            df[column] = pd.to_numeric(
+                df[column],
+                errors="coerce"
+            )
+
+        df = df.dropna(
+            subset=["date"]
+        ).reset_index(drop=True)
+
         return df
-    except Exception as e:
-        if uploaded_file is not None:
-            return pd.DataFrame()
-        np.random.seed(42)
-        n_rows = 500
-        return pd.DataFrame({
-            "date": pd.date_range(start="2020-01-01", periods=n_rows, freq="D"),
-            "admin1": np.random.choice(
-                ["Addis Ababa", "Oromia", "Amhara", "Tigray"], n_rows
-            ),
-            "admin2": np.random.choice(["AA ZONE1", "E. SHEWA", "W. GOJAM", "C. TIGRAY"], n_rows),
-            "market": np.random.choice(["Addis Ababa", "Adama", "Baher Dar", "Mekele"], n_rows),
-            "commodity": np.random.choice(
-                ["Maize (white)", "Wheat", "Sorghum (white)", "Teff (white)"], n_rows
-            ),
-            "category": ["cereals and tubers"] * n_rows,
-            "unit": ["100 KG"] * n_rows,
-            "priceflag": ["actual"] * n_rows,
-            "pricetype": ["Retail"] * n_rows,
-            "price": np.random.uniform(20.0, 150.0, n_rows),
-            "usdprice": np.random.uniform(0.5, 3.5, n_rows),
-            "latitude": np.random.uniform(3.5, 14.5, n_rows),
-            "longitude": np.random.uniform(34.0, 47.0, n_rows),
-        })
+
+    except Exception as error:
+
+        st.error(f"Could not load dataset: {error}")
+
+        return pd.DataFrame()
 
 
-# App Header Banner
+# =============================================================================
+# DROPDOWN AND LOCATION HELPERS
+# =============================================================================
+
+def get_options(dataframe, column, filters=None):
+    """
+    Return actual unique values from the dataset.
+    Parent filters can be applied for dependent dropdowns.
+    """
+
+    if column not in dataframe.columns:
+        return []
+
+    subset = dataframe
+
+    if filters:
+
+        for filter_column, selected_value in filters.items():
+
+            if filter_column not in subset.columns:
+                return []
+
+            subset = subset[
+                subset[filter_column].astype(str)
+                == str(selected_value)
+            ]
+
+    values = (
+        subset[column]
+        .dropna()
+        .astype(str)
+        .str.strip()
+    )
+
+    values = values[values.ne("")]
+
+    return sorted(
+        values.unique().tolist(),
+        key=str.casefold
+    )
+
+
+def reset_prediction_children(*keys):
+    """
+    Clear dependent selections when a parent dropdown changes.
+    """
+
+    for key in keys:
+        st.session_state.pop(key, None)
+
+
+def price_status_label(value):
+    """
+    Display readable price status labels.
+    The original dataset value is still passed to the model.
+    """
+
+    labels = {
+        "actual": "Actual",
+        "actual,aggregate": "Actual + Aggregate",
+        "aggregate": "Aggregate",
+        "forecast": "Forecast",
+    }
+
+    return labels.get(
+        str(value).strip().lower(),
+        str(value)
+    )
+
+
+def price_type_label(value):
+    return str(value)
+
+
+def get_market_coordinates(dataframe, region, zone, market):
+    """
+    Automatically retrieve representative coordinates
+    from the selected market in the dataset.
+    """
+
+    market_rows = dataframe[
+        (dataframe["admin1"].astype(str) == str(region))
+        & (dataframe["admin2"].astype(str) == str(zone))
+        & (dataframe["market"].astype(str) == str(market))
+    ].copy()
+
+    market_rows["latitude"] = pd.to_numeric(
+        market_rows["latitude"],
+        errors="coerce"
+    )
+
+    market_rows["longitude"] = pd.to_numeric(
+        market_rows["longitude"],
+        errors="coerce"
+    )
+
+    coordinates = market_rows[
+        ["latitude", "longitude"]
+    ].dropna()
+
+    if coordinates.empty:
+        return None, None
+
+    latitude = float(
+        coordinates["latitude"].mean()
+    )
+
+    longitude = float(
+        coordinates["longitude"].mean()
+    )
+
+    return latitude, longitude
+
+
+# =============================================================================
+# APPLICATION HEADER
+# =============================================================================
+
 st.markdown(
     """
-    <div style='display: flex; align-items: center; gap: 15px; margin-bottom: 0.5rem;'>
-        <img src='https://flagcdn.com/w80/et.png' width='50' style='border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);'/>
-        <h1 style='margin: 0; font-size: 2.2rem; color: #1e293b; font-weight: 800;'>Ethiopian Food Price Prediction & Market Analysis</h1>
+    <div style='display: flex; align-items: center; gap: 15px;
+                margin-bottom: 0.5rem;'>
+
+        <img src='https://flagcdn.com/w80/et.png'
+             width='50'
+             style='border-radius: 6px;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.15);'/>
+
+        <h1 style='margin: 0; font-size: 2.2rem;
+                   color: #1e293b; font-weight: 800;'>
+
+            Ethiopian Food Price Prediction & Market Analysis
+
+        </h1>
     </div>
     """,
     unsafe_allow_html=True,
 )
+
 st.markdown(
-    "An interactive decision-support application built for localized market"
-    " forecasting and price intelligence."
+    "An interactive decision-support application built for "
+    "localized market forecasting and price intelligence."
 )
 
-# Navigation Sidebar & File Upload Option
+
+# =============================================================================
+# NAVIGATION AND DATA UPLOAD
+# =============================================================================
+
 st.sidebar.markdown("### Navigation Menu")
+
 menu = st.sidebar.radio(
     "Go to",
     [
@@ -208,62 +417,95 @@ menu = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
+
 uploaded_file = st.sidebar.file_uploader(
-    "📁 Upload Custom Dataset (Required for Batch Prediction)", type=["xlsx", "csv"]
+    "📁 Upload Custom Dataset",
+    type=["xlsx", "csv"],
 )
 
-# Load dataset automatically
 df_data = load_dataset(uploaded_file)
 
+
 # =============================================================================
-# PAGE 1: MARKET INTELLIGENCE & OVERVIEW
+# PAGE 1: DATA OVERVIEW & MARKET SIGNALS
 # =============================================================================
+
 if menu == "📊 1. Data Overview & Market Signals":
-    st.header("📊 Key Dataset Insights & Aggregations Overview")
+
+    st.header(
+        "📊 Key Dataset Insights & Aggregations Overview"
+    )
+
     st.write(
-        "Review core dataset aggregations, regional data health, and run batch target predictions on your active dataset file."
+        "Review core dataset aggregations, regional data health, "
+        "and run batch target predictions on your active dataset file."
     )
 
     col1, col2, col3, col4 = st.columns(4)
+
     with col1:
+
         st.metric(
-            label="🧾 Total Recorded Transactions",
-            value=f"{len(df_data):,}" if df_data is not None and not df_data.empty else "0",
+            "🧾 Total Recorded Transactions",
+            f"{len(df_data):,}"
+            if not df_data.empty else "0",
         )
+
     with col2:
+
         st.metric(
-            label="🏛️ Covered Regions (Admin1)",
-            value=(
-                str(df_data["admin1"].nunique())
-                if df_data is not None and not df_data.empty and "admin1" in df_data.columns
-                else "0"
-            ),
+            "🏛️ Covered Regions (Admin1)",
+            str(df_data["admin1"].nunique())
+            if not df_data.empty and "admin1" in df_data.columns
+            else "0",
         )
+
     with col3:
+
         st.metric(
-            label="🌾 Unique Commodities",
-            value=(
-                str(df_data["commodity"].nunique())
-                if df_data is not None and not df_data.empty and "commodity" in df_data.columns
-                else "0"
-            ),
+            "🌾 Unique Commodities",
+            str(df_data["commodity"].nunique())
+            if not df_data.empty and "commodity" in df_data.columns
+            else "0",
         )
+
     with col4:
+
         st.metric(
-            label="🏷️ Total Columns",
-            value=len(df_data.columns) if df_data is not None and not df_data.empty else "0",
+            "🏷️ Total Columns",
+            len(df_data.columns)
+            if not df_data.empty else "0",
         )
 
     st.markdown("---")
 
-    if df_data is not None and not df_data.empty:
-        col_left, col_right = st.columns([2, 1], gap="large")
+    if not df_data.empty:
+
+        col_left, col_right = st.columns(
+            [2, 1],
+            gap="large"
+        )
 
         with col_left:
-            tab1, tab2 = st.tabs(["🛒 Top Commodities", "🌍 Regional Volume"])
+
+            tab1, tab2 = st.tabs(
+                [
+                    "🛒 Top Commodities",
+                    "🌍 Regional Volume"
+                ]
+            )
+
             with tab1:
-                st.caption("Ranked by frequency and average price.")
-                if {"commodity", "price"}.issubset(df_data.columns):
+
+                st.caption(
+                    "Ranked by frequency and average price."
+                )
+
+                if {
+                    "commodity",
+                    "price"
+                }.issubset(df_data.columns):
+
                     comm_summary = (
                         df_data.groupby("commodity")
                         .agg(
@@ -271,16 +513,38 @@ if menu == "📊 1. Data Overview & Market Signals":
                             Avg_Price=("price", "mean"),
                         )
                         .reset_index()
-                        .sort_values(by="Transactions", ascending=False)
+                        .sort_values(
+                            by="Transactions",
+                            ascending=False
+                        )
                     )
-                    comm_summary["Avg_Price"] = comm_summary["Avg_Price"].round(2)
-                    st.dataframe(comm_summary.head(10), use_container_width=True, height=300)
+
+                    comm_summary["Avg_Price"] = (
+                        comm_summary["Avg_Price"].round(2)
+                    )
+
+                    st.dataframe(
+                        comm_summary.head(10),
+                        use_container_width=True,
+                        height=300,
+                    )
+
                 else:
-                    st.info("Commodity or price column missing.")
+                    st.info(
+                        "Commodity or price column missing."
+                    )
 
             with tab2:
-                st.caption("Distribution across administrative regions.")
-                if {"admin1", "price"}.issubset(df_data.columns):
+
+                st.caption(
+                    "Distribution across administrative regions."
+                )
+
+                if {
+                    "admin1",
+                    "price"
+                }.issubset(df_data.columns):
+
                     reg_summary = (
                         df_data.groupby("admin1")
                         .agg(
@@ -288,188 +552,437 @@ if menu == "📊 1. Data Overview & Market Signals":
                             Avg_Price=("price", "mean"),
                         )
                         .reset_index()
-                        .sort_values(by="Transactions", ascending=False)
+                        .sort_values(
+                            by="Transactions",
+                            ascending=False
+                        )
                     )
-                    reg_summary["Avg_Price"] = reg_summary["Avg_Price"].round(2)
-                    st.dataframe(reg_summary, use_container_width=True, height=300)
+
+                    reg_summary["Avg_Price"] = (
+                        reg_summary["Avg_Price"].round(2)
+                    )
+
+                    st.dataframe(
+                        reg_summary,
+                        use_container_width=True,
+                        height=300,
+                    )
+
                 else:
-                    st.info("Admin1 or price column missing.")
+                    st.info(
+                        "Admin1 or price column missing."
+                    )
 
         with col_right:
-            st.markdown("#### 🔍 Data Scope & Quality")
-            st.caption("Record audit and memory stats.")
 
-            if "date" in df_data.columns and pd.api.types.is_datetime64_any_dtype(
-                df_data["date"]
-            ):
+            st.markdown("#### 🔍 Data Scope & Quality")
+
+            st.caption(
+                "Record audit and memory statistics."
+            )
+
+            if "date" in df_data.columns:
+
                 min_date = df_data["date"].min()
                 max_date = df_data["date"].max()
-                if pd.notna(min_date) and pd.notna(max_date):
+
+                if (
+                    pd.notna(min_date)
+                    and pd.notna(max_date)
+                ):
+
                     st.metric(
                         "📅 Temporal Span",
-                        f"{min_date.strftime('%Y-%m')} to {max_date.strftime('%Y-%m')}",
+                        f"{min_date.strftime('%Y-%m')} to "
+                        f"{max_date.strftime('%Y-%m')}",
                     )
+
                 else:
-                    st.metric("📅 Temporal Span", "N/A")
-            else:
-                st.metric("📅 Temporal Span", "N/A")
+                    st.metric(
+                        "📅 Temporal Span",
+                        "N/A"
+                    )
 
             st.metric(
-                "🧹 Total Missing Cells", int(df_data.isna().sum().sum())
+                "🧹 Total Missing Cells",
+                int(df_data.isna().sum().sum()),
             )
+
             st.metric(
                 "💾 Memory Footprint",
                 f"{df_data.memory_usage(deep=True).sum() / (1024*1024):.2f} MB",
             )
-            st.metric("✨ Duplicate Rows", int(df_data.duplicated().sum()))
+
+            st.metric(
+                "✨ Duplicate Rows",
+                int(df_data.duplicated().sum()),
+            )
+
+    else:
+
+        st.warning(
+            "No valid dataset is currently available."
+        )
 
     st.markdown("---")
-    st.subheader("🔮 Batch Price & USD Price Prediction")
+
+    st.subheader(
+        "🔮 Batch Price & USD Price Prediction"
+    )
+
     st.write(
-        "Run the trained machine learning model across all records in your uploaded dataset."
+        "Run the trained machine learning model across all records "
+        "in your uploaded dataset."
     )
 
     if uploaded_file is None:
+
         st.warning(
-            "⚠️ **Upload Required:** Please upload a custom dataset file (CSV or Excel) using the sidebar uploader above to enable batch predictions."
+            "⚠️ **Upload Required:** Upload a custom dataset using "
+            "the sidebar uploader to enable batch predictions."
         )
-    elif df_data is None or df_data.empty:
+
+    elif df_data.empty:
+
         st.error(
-            "⚠️ **Dataset Feature Mismatch:** The uploaded dataset's features do not match the model's required training columns. Please ensure your file contains the correct regional, commodity, or spatial columns."
+            "The uploaded dataset could not be loaded or does not "
+            "contain the required columns."
         )
+
     else:
-        st.success(f"📁 Active custom file loaded: **{uploaded_file.name}**")
+
+        st.success(
+            f"📁 Active custom file loaded: **{uploaded_file.name}**"
+        )
+
         selected_targets = st.multiselect(
             "Select prediction targets",
             TARGET_COLUMNS,
             default=TARGET_COLUMNS,
             key="batch_target_selector",
         )
-        st.caption("The uploaded price/usdprice values are not model inputs; each target is predicted independently.")
 
-        if st.button("🚀 Run Batch Prediction with Model"):
+        st.caption(
+            "The uploaded price/usdprice values are not model inputs; "
+            "each target is predicted independently."
+        )
+
+        if st.button(
+            "🚀 Run Batch Prediction with Model"
+        ):
+
             bundle, error_msg = load_model_assets()
+
             if error_msg:
-                st.error(f"Could not load model pipelines: {error_msg}")
+
+                st.error(
+                    f"Could not load model pipelines: {error_msg}"
+                )
+
             elif not selected_targets:
-                st.warning("Select at least one target: price and/or usdprice.")
+
+                st.warning(
+                    "Select at least one target: price and/or usdprice."
+                )
+
             else:
+
                 try:
+
                     df_predicted = df_data.copy()
-                    X_batch = prepare_model_features(df_predicted)
+
+                    X_batch = prepare_model_features(
+                        df_predicted
+                    )
+
                     for target_name in selected_targets:
-                        if target_name in bundle["models"]:
-                            df_predicted[f"Predicted_{target_name}"] = bundle["models"][target_name].predict(X_batch)
-                        elif target_name == "usdprice" and "price" in bundle["models"]:
-                            base_preds = bundle["models"]["price"].predict(X_batch)
-                            df_predicted["Predicted_usdprice"] = (base_preds / 57.0).round(2)
-                        else:
-                            raise ValueError(f"Saved artifact has no fitted model for {target_name}.")
+
+                        if target_name not in bundle["models"]:
+
+                            raise ValueError(
+                                f"Saved artifact has no fitted model "
+                                f"for {target_name}."
+                            )
+
+                        df_predicted[
+                            f"Predicted_{target_name}"
+                        ] = bundle["models"][target_name].predict(
+                            X_batch
+                        )
 
                     st.success(
-                        "Batch prediction completed with the saved model pipeline for: "
+                        "Batch prediction completed for: "
                         + ", ".join(selected_targets)
                     )
-                    st.dataframe(df_predicted.head(10), use_container_width=True)
-                    csv_data = df_predicted.to_csv(index=False).encode("utf-8")
+
+                    st.dataframe(
+                        df_predicted.head(10),
+                        use_container_width=True,
+                    )
+
+                    csv_data = df_predicted.to_csv(
+                        index=False
+                    ).encode("utf-8")
+
                     st.download_button(
                         label="📥 Download Predictions CSV",
                         data=csv_data,
                         file_name="predicted_dataset_results.csv",
                         mime="text/csv",
                     )
-                except Exception as ex:
-                    st.error(f"Error during batch prediction execution: {ex}")
+
+                except Exception as error:
+
+                    st.error(
+                        f"Error during batch prediction execution: {error}"
+                    )
+
 
 # =============================================================================
-# PAGE 2: VISUALIZATIONS & ANALYTICS
+# PAGE 2: EXPLORATORY ANALYTICS & TRENDS
 # =============================================================================
+
 elif menu == "📈 2. Exploratory Analytics & Trends":
-    st.header("📈 Market Insights & Historical Data Visualizations")
-    st.markdown("---")
-    if df_data is not None and not df_data.empty:
-        map_col, box_col = st.columns(2, gap="large")
-        with map_col:
-            st.subheader("🗺️ Geospatial Market Price Map")
-            st.write("Interactive map showing market monitoring locations across Ethiopia.")
-            if {"latitude", "longitude", "price"}.issubset(df_data.columns):
-                map_df = df_data.dropna(subset=["latitude", "longitude", "price"])
 
-                fig_map = px.scatter_geo(
-                    map_df.sample(min(len(map_df), 2000)),
-                    lat="latitude",
-                    lon="longitude",
-                    color="price",
-                    size="price",
-                    hover_name="market" if "market" in map_df.columns else None,
-                    hover_data=(
-                        ["admin1", "commodity"]
-                        if {"admin1", "commodity"}.issubset(map_df.columns)
-                        else None
-                    ),
-                    color_continuous_scale=px.colors.sequential.Tealgrn,
-                    projection="natural earth",
-                    title="Market Locations & Price Intensity",
+    st.header(
+        "📈 Market Insights & Historical Data Visualizations"
+    )
+
+    st.markdown("---")
+
+    if not df_data.empty:
+
+        map_col, box_col = st.columns(
+            2,
+            gap="large"
+        )
+
+        # ---------------------------------------------------------------------
+        # GEOSPATIAL MAP
+        # ---------------------------------------------------------------------
+
+        with map_col:
+
+            st.subheader(
+                "🗺️ Geospatial Market Price Map"
+            )
+
+            st.write(
+                "Interactive map showing market monitoring locations "
+                "across Ethiopia."
+            )
+
+            if {
+                "latitude",
+                "longitude",
+                "price"
+            }.issubset(df_data.columns):
+
+                map_df = df_data.dropna(
+                    subset=[
+                        "latitude",
+                        "longitude",
+                        "price"
+                    ]
                 )
-                fig_map.update_geos(
-                    center={"lat": 9.145, "lon": 40.489},
-                    projection_scale=7,
-                    showcountries=True,
-                    countrycolor="gray",
-                )
-                fig_map.update_layout(
-                    margin={"r": 0, "t": 40, "l": 0, "b": 0}, height=400
-                )
-                st.plotly_chart(fig_map, use_container_width=True)
+
+                if not map_df.empty:
+
+                    fig_map = px.scatter_geo(
+                        map_df.sample(
+                            min(len(map_df), 2000)
+                        ),
+                        lat="latitude",
+                        lon="longitude",
+                        color="price",
+                        size="price",
+                        hover_name=(
+                            "market"
+                            if "market" in map_df.columns
+                            else None
+                        ),
+                        hover_data=[
+                            column
+                            for column in [
+                                "admin1",
+                                "commodity"
+                            ]
+                            if column in map_df.columns
+                        ],
+                        color_continuous_scale=(
+                            px.colors.sequential.Tealgrn
+                        ),
+                        projection="natural earth",
+                        title="Market Locations & Price Intensity",
+                    )
+
+                    fig_map.update_geos(
+                        center={
+                            "lat": 9.145,
+                            "lon": 40.489
+                        },
+                        projection_scale=7,
+                        showcountries=True,
+                        countrycolor="gray",
+                    )
+
+                    fig_map.update_layout(
+                        margin={
+                            "r": 0,
+                            "t": 40,
+                            "l": 0,
+                            "b": 0
+                        },
+                        height=400,
+                    )
+
+                    st.plotly_chart(
+                        fig_map,
+                        use_container_width=True,
+                    )
+
+                else:
+
+                    st.info(
+                        "No valid geographical records are available."
+                    )
+
             else:
-                st.info("Latitude, longitude, or price columns required for map view.")
+
+                st.info(
+                    "Latitude, longitude, and price columns are required."
+                )
+
+        # ---------------------------------------------------------------------
+        # REGIONAL PRICE DISTRIBUTION
+        # ---------------------------------------------------------------------
 
         with box_col:
-            st.subheader("📊 Regional Price Distributions")
-            st.write("Price variance and outliers across administrative regions.")
-            if {"admin1", "price"}.issubset(df_data.columns):
+
+            st.subheader(
+                "📊 Regional Price Distributions"
+            )
+
+            st.write(
+                "Price variance and outliers across administrative regions."
+            )
+
+            if {
+                "admin1",
+                "price"
+            }.issubset(df_data.columns):
+
+                box_data = df_data.dropna(
+                    subset=["admin1", "price"]
+                )
+
                 fig_box = px.box(
-                    df_data.dropna(subset=["admin1", "price"]),
+                    box_data,
                     x="admin1",
                     y="price",
                     color="admin1",
                     title="Price Spread by Region",
-                    labels={"admin1": "Region", "price": "Price (ETB)"},
+                    labels={
+                        "admin1": "Region",
+                        "price": "Price (ETB)",
+                    },
                 )
+
                 fig_box.update_layout(
                     showlegend=False,
-                    margin={"r": 0, "t": 40, "l": 0, "b": 0},
+                    margin={
+                        "r": 0,
+                        "t": 40,
+                        "l": 0,
+                        "b": 0
+                    },
                     height=400,
                 )
-                st.plotly_chart(fig_box, use_container_width=True)
+
+                st.plotly_chart(
+                    fig_box,
+                    use_container_width=True,
+                )
+
             else:
-                st.info("Admin1 and price columns required for box plot view.")
+
+                st.info(
+                    "Admin1 and price columns are required for the box plot."
+                )
+
+        # ---------------------------------------------------------------------
+        # HISTORICAL PRICE TREND
+        # ---------------------------------------------------------------------
 
         st.markdown("---")
 
-        st.subheader("📉 Historical Staple Price Trends Over Time")
-        st.write(
-            "Long-term monthly average price evolution for core food commodities."
+        st.subheader(
+            "📉 Historical Staple Price Trends Over Time"
         )
 
-        if {"date", "commodity", "price"}.issubset(df_data.columns):
-            trend_df = (
-                df_data.groupby([df_data["date"].dt.to_period("M"), "commodity"])[
+        st.write(
+            "Long-term monthly average price evolution "
+            "for core food commodities."
+        )
+
+        if {
+            "date",
+            "commodity",
+            "price"
+        }.issubset(df_data.columns):
+
+            valid_trend_data = df_data.dropna(
+                subset=[
+                    "date",
+                    "commodity",
                     "price"
                 ]
+            ).copy()
+
+            trend_df = (
+                valid_trend_data
+                .groupby(
+                    [
+                        valid_trend_data["date"].dt.to_period("M"),
+                        "commodity",
+                    ]
+                )["price"]
                 .mean()
                 .reset_index()
             )
-            trend_df["date"] = trend_df["date"].dt.to_timestamp()
 
-            major_staples = ["Maize (white)", "Wheat", "Sorghum", "Rice", "Teff"]
-            available_staples = [
-                s for s in major_staples if s in trend_df["commodity"].unique()
+            trend_df["date"] = (
+                trend_df["date"].dt.to_timestamp()
+            )
+
+            major_staples = [
+                "Maize (white)",
+                "Wheat",
+                "Sorghum",
+                "Rice",
+                "Teff"
             ]
-            if not available_staples:
-                available_staples = trend_df["commodity"].unique()[:4]
 
-            filtered_trend = trend_df[trend_df["commodity"].isin(available_staples)]
+            available_staples = [
+                staple
+                for staple in major_staples
+                if staple in trend_df["commodity"].unique()
+            ]
+
+            if not available_staples:
+
+                available_staples = (
+                    trend_df["commodity"]
+                    .drop_duplicates()
+                    .head(4)
+                    .tolist()
+                )
+
+            filtered_trend = trend_df[
+                trend_df["commodity"].isin(
+                    available_staples
+                )
+            ]
 
             fig_trend = px.line(
                 filtered_trend,
@@ -477,388 +990,517 @@ elif menu == "📈 2. Exploratory Analytics & Trends":
                 y="price",
                 color="commodity",
                 title="Monthly Average Price Trend (ETB)",
-                labels={"price": "Price in ETB", "date": "Date"},
+                labels={
+                    "price": "Price in ETB",
+                    "date": "Date",
+                },
             )
+
             fig_trend.update_layout(
-                height=450, margin={"r": 0, "t": 40, "l": 0, "b": 0}
+                height=450,
+                margin={
+                    "r": 0,
+                    "t": 40,
+                    "l": 0,
+                    "b": 0
+                },
             )
-            st.plotly_chart(fig_trend, use_container_width=True)
+
+            st.plotly_chart(
+                fig_trend,
+                use_container_width=True,
+            )
+
         else:
-            st.info("Date, commodity, and price columns required for trend analysis.")
+
+            st.info(
+                "Date, commodity, and price columns are required "
+                "for trend analysis."
+            )
 
     else:
-        st.info("ℹ️ Loading dashboard metrics and visuals...")
 
+        st.info(
+            "No dataset is currently available for visualization."
+        )
 
 
 # =============================================================================
 # PAGE 3: INTERACTIVE PREDICTION ENGINE
-# Dynamic Cascading Dropdown Selection
 # =============================================================================
 
 elif menu == "🎯 3. Interactive Prediction Engine":
 
-    st.header("🎯 Real-Time Market Price Inference")
-    st.markdown(
-        "Select actual geographic, market, price type (e.g., Retail vs. Wholesale), "
-        "and commodity parameters below to evaluate predicted food prices."
+    st.header(
+        "🎯 Real-Time Market Price Inference"
     )
 
-    # -------------------------------------------------------------------------
-    # DEFAULT OPTIONS
-    # -------------------------------------------------------------------------
+    st.markdown(
+        "Select geographic, market, and commodity parameters below "
+        "to evaluate predicted food prices."
+    )
 
-    default_admin1 = [
-        "Addis Ababa", "Oromia", "Amhara", "Tigray",
-        "Somali", "SNNPR / Sidama", "Afar", "Dire Dawa"
-    ]
+    if df_data.empty:
 
-    default_admin2 = [
-        "Addis Ababa Zone", "Adama Special Zone", "Bahir Dar Special Zone",
-        "Hawassa Special Zone", "Mekelle Special Zone", "Dire Dawa Zone",
-        "East Shewa Zone", "West Gojjam Zone", "North Shewa Zone",
-        "South Wollo Zone"
-    ]
-
-    default_markets = [
-        "Addis Ababa Market", "Bahir Dar Market",
-        "Hawassa Market", "Adama Market", "Mekelle Market"
-    ]
-
-    default_categories = [
-        "Cereals and Tubers", "Pulses and Nuts",
-        "Vegetables and Fruits", "Meat, Fish and Eggs"
-    ]
-
-    default_commodities = [
-        "Maize (White)", "Teff (Mixed)", "Wheat", "Sorghum", "Barley"
-    ]
-
-    default_units = ["KG", "Quintal", "Pound", "Litre"]
-
-    default_priceflags = [
-        "Actual / Verified", "Estimated / Imputed"
-    ]
-
-    default_pricetypes = ["Retail", "Wholesale"]
-
-    # -------------------------------------------------------------------------
-    # HELPER FUNCTIONS
-    # -------------------------------------------------------------------------
-
-    def get_feature_options(data, column, default_choices):
-        if data is not None and not data.empty and column in data.columns:
-            options = sorted(
-                data[column].dropna().astype(str).str.strip().unique().tolist()
-            )
-            options = [x for x in options if x]
-
-            if options:
-                return options
-
-        return default_choices
-
-    def reset_region():
-        for key in [
-            "admin2", "market", "category", "commodity",
-            "unit", "priceflag", "pricetype"
-        ]:
-            st.session_state.pop(key, None)
-
-    def reset_zone():
-        for key in [
-            "market", "category", "commodity",
-            "unit", "priceflag", "pricetype"
-        ]:
-            st.session_state.pop(key, None)
-
-    def reset_market():
-        for key in [
-            "category", "commodity", "unit",
-            "priceflag", "pricetype"
-        ]:
-            st.session_state.pop(key, None)
-
-    def reset_category():
-        for key in [
-            "commodity", "unit", "priceflag", "pricetype"
-        ]:
-            st.session_state.pop(key, None)
-
-    def reset_commodity():
-        for key in ["unit", "priceflag", "pricetype"]:
-            st.session_state.pop(key, None)
-
-    # -------------------------------------------------------------------------
-    # PREDICTION FORM
-    # -------------------------------------------------------------------------
-
-    with st.form("prediction_form"):
-
-        col_a, col_b = st.columns(2, gap="large")
-
-        with col_a:
-
-            st.markdown(
-                '<div class="section-header">📍 Spatial & Temporal Details</div>',
-                unsafe_allow_html=True,
-            )
-
-            date_val = st.date_input(
-                "Transaction Date",
-                value=pd.to_datetime("2022-12-15")
-            )
-
-            latitude = st.slider(
-                "Latitude Coordinate",
-                min_value=3.0000,
-                max_value=15.0000,
-                value=9.0200,
-                step=0.0100,
-                format="%.4f",
-            )
-
-            longitude = st.slider(
-                "Longitude Coordinate",
-                min_value=33.0000,
-                max_value=48.0000,
-                value=38.7500,
-                step=0.0100,
-                format="%.4f",
-            )
-
-            # ADMIN1: REGION
-
-            admin1_options = get_feature_options(
-                df_data, "admin1", default_admin1
-            )
-
-            admin1 = st.selectbox(
-                "Region (Admin1)",
-                options=admin1_options,
-                key="admin1",
-                on_change=reset_region
-            )
-
-            # FILTER BY REGION
-
-            region_df = df_data[
-                df_data["admin1"].astype(str).str.strip() == admin1
-            ].copy()
-
-            # ADMIN2: ZONE
-
-            admin2_options = get_feature_options(
-                region_df, "admin2", default_admin2
-            )
-
-            admin2 = st.selectbox(
-                "Zone (Admin2)",
-                options=admin2_options,
-                key="admin2",
-                on_change=reset_zone
-            )
-
-            # FILTER BY REGION AND ZONE
-
-            zone_df = region_df[
-                region_df["admin2"].astype(str).str.strip() == admin2
-            ].copy() if "admin2" in region_df.columns else region_df
-
-        with col_b:
-
-            st.markdown(
-                '<div class="section-header">🛒 Market & Feature Choices</div>',
-                unsafe_allow_html=True,
-            )
-
-            # LOCAL MARKET
-
-            market_options = get_feature_options(
-                zone_df, "market", default_markets
-            )
-
-            market = st.selectbox(
-                "Local Market Name",
-                options=market_options,
-                key="market",
-                on_change=reset_market
-            )
-
-            # FILTER BY MARKET
-
-            market_df = zone_df[
-                zone_df["market"].astype(str).str.strip() == market
-            ].copy() if "market" in zone_df.columns else zone_df
-
-            # COMMODITY CATEGORY
-
-            category_options = get_feature_options(
-                market_df, "category", default_categories
-            )
-
-            category = st.selectbox(
-                "Commodity Category",
-                options=category_options,
-                key="category",
-                on_change=reset_category
-            )
-
-            # FILTER BY CATEGORY
-
-            category_df = market_df[
-                market_df["category"].astype(str).str.strip() == category
-            ].copy() if "category" in market_df.columns else market_df
-
-            # COMMODITY NAME
-
-            commodity_options = get_feature_options(
-                category_df, "commodity", default_commodities
-            )
-
-            commodity = st.selectbox(
-                "Commodity Name",
-                options=commodity_options,
-                key="commodity",
-                on_change=reset_commodity
-            )
-
-            # FILTER BY COMMODITY
-
-            commodity_df = category_df[
-                category_df["commodity"].astype(str).str.strip() == commodity
-            ].copy() if "commodity" in category_df.columns else category_df
-
-            # MEASUREMENT UNIT
-
-            unit = st.selectbox(
-                "Measurement Unit",
-                options=get_feature_options(
-                    commodity_df, "unit", default_units
-                ),
-                key="unit"
-            )
-
-            # PRICE FLAG
-
-            priceflag = st.selectbox(
-                "Price Status / Flag",
-                options=get_feature_options(
-                    commodity_df, "priceflag", default_priceflags
-                ),
-                key="priceflag"
-            )
-
-            # PRICE TYPE
-
-            pricetype = st.selectbox(
-                "Price Type (e.g., Retail vs Wholesale)",
-                options=get_feature_options(
-                    commodity_df, "pricetype", default_pricetypes
-                ),
-                key="pricetype"
-            )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        submit = st.form_submit_button(
-            "🚀 Predict Market Price"
+        st.error(
+            "The dataset is empty or invalid. Load the WFP dataset "
+            "or upload a valid dataset first."
         )
 
-        # ---------------------------------------------------------------------
-        # PREDICTION LOGIC
-        # ---------------------------------------------------------------------
+        st.stop()
 
-        if submit:
+    # -------------------------------------------------------------------------
+    # 1. GEOGRAPHICAL SELECTION
+    # -------------------------------------------------------------------------
 
-            bundle, error_msg = load_model_assets()
+    st.markdown(
+        '<div class="section-header">📍 1. Geographical Selection</div>',
+        unsafe_allow_html=True,
+    )
 
-            if error_msg:
+    region_col, zone_col, market_col = st.columns(
+        3,
+        gap="large"
+    )
 
-                st.error(
-                    f"Could not process prediction. Serialized assets error: {error_msg}"
+    region_options = get_options(
+        df_data,
+        "admin1"
+    )
+
+    if not region_options:
+
+        st.error(
+            "No region values were found in the dataset."
+        )
+
+        st.stop()
+
+    with region_col:
+
+        admin1 = st.selectbox(
+            "Region (Admin1)",
+            options=region_options,
+            key="prediction_admin1",
+            on_change=reset_prediction_children,
+            args=(
+                "prediction_admin2",
+                "prediction_market"
+            ),
+        )
+
+    zone_options = get_options(
+        df_data,
+        "admin2",
+        filters={
+            "admin1": admin1
+        },
+    )
+
+    if not zone_options:
+
+        st.warning(
+            "No zones are recorded for the selected region."
+        )
+
+        st.stop()
+
+    with zone_col:
+
+        admin2 = st.selectbox(
+            "Zone (Admin2)",
+            options=zone_options,
+            key="prediction_admin2",
+            on_change=reset_prediction_children,
+            args=(
+                "prediction_market",
+            ),
+        )
+
+    market_options = get_options(
+        df_data,
+        "market",
+        filters={
+            "admin1": admin1,
+            "admin2": admin2,
+        },
+    )
+
+    if not market_options:
+
+        st.warning(
+            "No markets are recorded for the selected region and zone."
+        )
+
+        st.stop()
+
+    with market_col:
+
+        market = st.selectbox(
+            "Local Market Name",
+            options=market_options,
+            key="prediction_market",
+        )
+
+    # -------------------------------------------------------------------------
+    # AUTOMATIC MARKET COORDINATES
+    # -------------------------------------------------------------------------
+
+    latitude, longitude = get_market_coordinates(
+        df_data,
+        admin1,
+        admin2,
+        market,
+    )
+
+    if latitude is None or longitude is None:
+
+        st.warning(
+            "Coordinates are not available for this market. "
+            "Choose another market with recorded coordinates."
+        )
+
+        st.stop()
+
+    coordinate_col1, coordinate_col2 = st.columns(2)
+
+    with coordinate_col1:
+
+        st.metric(
+            "📍 Market Latitude",
+            f"{latitude:.6f}",
+        )
+
+    with coordinate_col2:
+
+        st.metric(
+            "📍 Market Longitude",
+            f"{longitude:.6f}",
+        )
+
+    # -------------------------------------------------------------------------
+    # 2. COMMODITY SELECTION
+    # -------------------------------------------------------------------------
+
+    st.markdown(
+        '<div class="section-header">🛒 2. Commodity Selection</div>',
+        unsafe_allow_html=True,
+    )
+
+    category_col, commodity_col, unit_col = st.columns(
+        3,
+        gap="large"
+    )
+
+    category_options = get_options(
+        df_data,
+        "category"
+    )
+
+    if not category_options:
+
+        st.error(
+            "No commodity categories were found."
+        )
+
+        st.stop()
+
+    with category_col:
+
+        category = st.selectbox(
+            "Commodity Category",
+            options=category_options,
+            key="prediction_category",
+            on_change=reset_prediction_children,
+            args=(
+                "prediction_commodity",
+                "prediction_unit"
+            ),
+        )
+
+    commodity_options = get_options(
+        df_data,
+        "commodity",
+        filters={
+            "category": category
+        },
+    )
+
+    if not commodity_options:
+
+        st.warning(
+            "No commodities are recorded for the selected category."
+        )
+
+        st.stop()
+
+    with commodity_col:
+
+        commodity = st.selectbox(
+            "Commodity Name",
+            options=commodity_options,
+            key="prediction_commodity",
+            on_change=reset_prediction_children,
+            args=(
+                "prediction_unit",
+            ),
+        )
+
+    unit_options = get_options(
+        df_data,
+        "unit",
+        filters={
+            "category": category,
+            "commodity": commodity,
+        },
+    )
+
+    if not unit_options:
+
+        st.warning(
+            "No measurement units are recorded for this commodity."
+        )
+
+        st.stop()
+
+    with unit_col:
+
+        unit = st.selectbox(
+            "Measurement Unit",
+            options=unit_options,
+            key="prediction_unit",
+        )
+
+    # -------------------------------------------------------------------------
+    # 3. PRICE INFORMATION
+    # -------------------------------------------------------------------------
+
+    st.markdown(
+        '<div class="section-header">🏷️ 3. Price Information</div>',
+        unsafe_allow_html=True,
+    )
+
+    status_col, type_col = st.columns(
+        2,
+        gap="large"
+    )
+
+    priceflag_options = get_options(
+        df_data,
+        "priceflag"
+    )
+
+    pricetype_options = get_options(
+        df_data,
+        "pricetype"
+    )
+
+    if not priceflag_options or not pricetype_options:
+
+        st.error(
+            "Price status or price type values are missing from the dataset."
+        )
+
+        st.stop()
+
+    with status_col:
+
+        priceflag = st.selectbox(
+            "Price Status",
+            options=priceflag_options,
+            format_func=price_status_label,
+            key="prediction_priceflag",
+        )
+
+    with type_col:
+
+        pricetype = st.selectbox(
+            "Price Type",
+            options=pricetype_options,
+            format_func=price_type_label,
+            key="prediction_pricetype",
+        )
+
+    # -------------------------------------------------------------------------
+    # 4. DATE AND CURRENCY
+    # -------------------------------------------------------------------------
+
+    st.markdown(
+        '<div class="section-header">📅 4. Prediction Date</div>',
+        unsafe_allow_html=True,
+    )
+
+    date_col, currency_col = st.columns(
+        2,
+        gap="large"
+    )
+
+    valid_dates = df_data["date"].dropna()
+
+    if not valid_dates.empty:
+
+        default_date = valid_dates.max().date()
+
+    else:
+
+        default_date = pd.Timestamp(
+            "2022-12-15"
+        ).date()
+
+    with date_col:
+
+        date_val = st.date_input(
+            "Transaction Date",
+            value=default_date,
+            key="prediction_date",
+        )
+
+    currency_options = get_options(
+        df_data,
+        "currency"
+    )
+
+    with currency_col:
+
+        if currency_options:
+
+            currency = st.selectbox(
+                "Currency",
+                options=currency_options,
+                key="prediction_currency",
+                disabled=True,
+            )
+
+        else:
+
+            currency = "ETB"
+
+            st.text_input(
+                "Currency",
+                value=currency,
+                disabled=True,
+            )
+
+    # -------------------------------------------------------------------------
+    # 5. PRICE PREDICTION
+    # -------------------------------------------------------------------------
+
+    st.markdown("---")
+
+    if st.button(
+        "🚀 Predict Market Price",
+        key="run_market_prediction",
+    ):
+
+        bundle, error_msg = load_model_assets()
+
+        if error_msg:
+
+            st.error(
+                f"Could not process prediction. "
+                f"Serialized assets error: {error_msg}"
+            )
+
+        else:
+
+            try:
+
+                input_row = pd.DataFrame([{
+                    "admin1": admin1,
+                    "admin2": admin2,
+                    "market": market,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "category": category,
+                    "commodity": commodity,
+                    "unit": unit,
+                    "priceflag": priceflag,
+                    "pricetype": pricetype,
+                    "date": pd.to_datetime(date_val),
+                }])
+
+                X_input = prepare_model_features(
+                    input_row
                 )
 
-            else:
+                if "price" not in bundle["models"]:
 
-                try:
-
-                    dt_date = pd.to_datetime(date_val)
-
-                    input_row = pd.DataFrame([{
-                        "admin1": admin1,
-                        "admin2": admin2,
-                        "market": market,
-                        "latitude": latitude,
-                        "longitude": longitude,
-                        "category": category,
-                        "commodity": commodity,
-                        "unit": unit,
-                        "priceflag": priceflag,
-                        "pricetype": pricetype,
-                        "date": dt_date,
-                    }])
-
-                    X_single = prepare_model_features(input_row)
-
-                    if "price" in bundle["models"]:
-                        prediction = bundle["models"]["price"].predict(
-                            X_single
-                        )[0]
-                    else:
-                        prediction = bundle["models"].predict(
-                            X_single
-                        )[0]
-
-                    st.success(
-                        f"✨ Predicted Local Market Price: "
-                        f"**{prediction:,.2f} ETB**"
+                    raise ValueError(
+                        "The saved model bundle does not contain "
+                        "a fitted price prediction model."
                     )
 
-                    with st.expander(
-                        "📌 View Model Training & Test Performance Metrics"
+                prediction = bundle["models"]["price"].predict(
+                    X_input
+                )[0]
+
+                st.success(
+                    f"✨ Predicted Local Market Price: "
+                    f"**{prediction:,.2f} {currency}**"
+                )
+
+                with st.expander(
+                    "📋 View Selected Prediction Parameters"
+                ):
+
+                    display_row = input_row.copy()
+
+                    display_row["currency"] = currency
+
+                    st.dataframe(
+                        display_row,
+                        use_container_width=True,
+                    )
+
+                # -------------------------------------------------------------
+                # MODEL PERFORMANCE METRICS
+                # -------------------------------------------------------------
+
+                with st.expander(
+                    "📌 View Model Training & Test Performance Metrics"
+                ):
+
+                    if (
+                        "price" in bundle["metrics"]
+                        and isinstance(
+                            bundle["metrics"]["price"],
+                            dict
+                        )
                     ):
+
+                        price_metrics = bundle["metrics"]["price"]
 
                         m1, m2, m3, m4 = st.columns(4)
 
-                        if (
-                            "metrics" in bundle
-                            and "price" in bundle["metrics"]
-                        ):
+                        m1.metric(
+                            "Training R² Score",
+                            f"{price_metrics['train_r2']:.4f}",
+                        )
 
-                            price_metrics = bundle["metrics"]["price"]
+                        m2.metric(
+                            "Testing R² Score",
+                            f"{price_metrics['test_r2']:.4f}",
+                        )
 
-                            m1.metric(
-                                "Training R² Score",
-                                f"{price_metrics.get('train_r2', 0.9837):.4f}"
-                            )
+                        m3.metric(
+                            "Testing RMSE",
+                            f"{price_metrics['test_rmse']:.4f}",
+                        )
 
-                            m2.metric(
-                                "Testing R² Score",
-                                f"{price_metrics.get('test_r2', 0.9729):.4f}"
-                            )
+                        m4.metric(
+                            "Overfit Gap",
+                            f"{price_metrics['overfit_gap']:.4f}",
+                        )
 
-                            m3.metric(
-                                "Testing RMSE",
-                                f"{price_metrics.get('test_rmse', 306.9749):.4f}"
-                            )
+                    else:
 
-                            m4.metric(
-                                "Overfit Gap",
-                                f"{price_metrics.get('overfit_gap', 0.0107):.4f}"
-                            )
+                        st.info(
+                            "Price model evaluation metrics are "
+                            "not available in the saved bundle."
+                        )
 
-                        else:
+            except Exception as error:
 
-                            m1.metric("Training R² Score", "0.9837")
-                            m2.metric("Testing R² Score", "0.9729")
-                            m3.metric("Testing RMSE", "306.9749")
-                            m4.metric("Overfit Gap", "0.0107")
-
-                except Exception as ex:
-
-                    st.error(
-                        f"Error processing prediction parameters: {ex}"
-                    )
-
-
+                st.error(
+                    f"Error processing prediction parameters: {error}"
+                )
