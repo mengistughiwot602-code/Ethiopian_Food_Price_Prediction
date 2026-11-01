@@ -1,8 +1,4 @@
 import os
-from pathlib import Path
-import math
-import tempfile
-
 import joblib
 import numpy as np
 import pandas as pd
@@ -14,47 +10,24 @@ from PIL import Image, ImageDraw
 # PAGE CONFIGURATION
 # =============================================================================
 
-# Generate a real Ethiopian flag image locally for the browser tab and header.
-APP_DIR = Path(__file__).resolve().parent
-FLAG_ICON_PATH = Path(tempfile.gettempdir()) / "ethiopian_flag_icon.png"
-
-
-def create_ethiopian_flag(path):
-    width, height = 96, 60
-    flag = Image.new("RGBA", (width, height), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(flag)
-    stripe_height = height // 3
-
-    draw.rectangle((0, 0, width, stripe_height), fill="#078930")
-    draw.rectangle((0, stripe_height, width, stripe_height * 2), fill="#FCDD09")
-    draw.rectangle((0, stripe_height * 2, width, height), fill="#DA121A")
-
-    center = (width // 2, height // 2)
-    radius = 17
-    draw.ellipse(
-        (center[0] - radius, center[1] - radius,
-         center[0] + radius, center[1] + radius),
-        fill="#0F47AF",
-    )
-
-    star_points = []
-    for index in range(10):
-        angle = -math.pi / 2 + index * math.pi / 5
-        radius_now = 10 if index % 2 == 0 else 4.2
-        star_points.append((
-            center[0] + radius_now * math.cos(angle),
-            center[1] + radius_now * math.sin(angle),
-        ))
-    draw.polygon(star_points, fill="#FCDD09")
-    flag.save(path)
-
-
-if not FLAG_ICON_PATH.exists():
-    create_ethiopian_flag(FLAG_ICON_PATH)
+# Create a real Ethiopian flag image for the browser tab icon.
+ethiopian_flag_icon = Image.new("RGB", (96, 64), "white")
+draw = ImageDraw.Draw(ethiopian_flag_icon)
+draw.rectangle((0, 0, 95, 21), fill="#078930")
+draw.rectangle((0, 21, 95, 42), fill="#FCDD09")
+draw.rectangle((0, 42, 95, 63), fill="#DA121A")
+# Blue central emblem and a yellow star.
+draw.ellipse((35, 10, 61, 54), fill="#0F47AF")
+star_points = [
+    (48, 16), (51, 27), (62, 27), (53, 34),
+    (57, 45), (48, 38), (39, 45), (43, 34),
+    (34, 27), (45, 27),
+]
+draw.polygon(star_points, fill="#FCDD09")
 
 st.set_page_config(
     page_title="Ethiopia Food Price Prediction & Analytics",
-    page_icon=str(FLAG_ICON_PATH),
+    page_icon=ethiopian_flag_icon,
     layout="wide",
 )
 
@@ -66,32 +39,8 @@ st.markdown(
     """
     <style>
         .block-container {
-            padding-top: 1.5rem;
+            padding-top: 2rem;
             padding-bottom: 2rem;
-            padding-left: clamp(1rem, 3vw, 3rem);
-            padding-right: clamp(1rem, 3vw, 3rem);
-            max-width: 100%;
-        }
-
-        .app-title {
-            font-size: clamp(1.45rem, 2.35vw, 2.35rem);
-            line-height: 1.15;
-            font-weight: 800;
-            color: #172b4d;
-            margin: 0;
-            overflow-wrap: anywhere;
-        }
-
-        .app-subtitle {
-            margin-top: 0.65rem;
-            margin-bottom: 1.4rem;
-            color: #334155;
-            font-size: 1rem;
-        }
-
-        @media (max-width: 700px) {
-            .app-title { font-size: 1.45rem; }
-            .app-subtitle { font-size: 0.9rem; }
         }
 
         [data-testid="stSidebar"] {
@@ -143,7 +92,6 @@ st.markdown(
 
 # =============================================================================
 # MODEL FEATURES
-# These must remain consistent with the features used during model training.
 # =============================================================================
 
 CATEGORICAL_FEATURES = [
@@ -236,38 +184,31 @@ def load_model_assets():
 
 
 # =============================================================================
-# DATASET LOADER
+# DATASET LOADER (Default Local Data)
 # =============================================================================
 
 @st.cache_data
-def load_dataset(uploaded_file=None):
+def load_default_dataset():
     try:
-        if uploaded_file is not None:
-            if uploaded_file.name.lower().endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-
+        if os.path.exists("wfp_food_prices_et.xlsx"):
+            df = pd.read_excel("wfp_food_prices_et.xlsx")
         else:
-            default_dataset_path = APP_DIR / "wfp_food_prices_et.xlsx"
-
-            if default_dataset_path.exists():
-                df = pd.read_excel(default_dataset_path)
+            excel_files = [
+                file for file in os.listdir(".")
+                if file.lower().endswith(".xlsx")
+            ]
+            if excel_files:
+                df = pd.read_excel(excel_files[0])
             else:
                 raise FileNotFoundError(
-                    "The default dataset 'wfp_food_prices_et.xlsx' was not "
-                    "found beside app.py. Add it to the root of your "
-                    "GitHub repository. You can also upload a custom file."
+                    "No default dataset file found locally."
                 )
 
-        # The WFP Excel file has a metadata row containing values such as
-        # #date, #adm1+name, and #item+name. Remove metadata rows by content.
         metadata_mask = df.astype(str).apply(
             lambda column: column.str.strip().str.startswith("#")
         ).any(axis=1)
         df = df.loc[~metadata_mask].copy()
 
-        # Normalize column names without changing the dataset values.
         df.columns = df.columns.astype(str).str.strip().str.lower()
         df.reset_index(drop=True, inplace=True)
 
@@ -287,13 +228,54 @@ def load_dataset(uploaded_file=None):
         ]:
             df[column] = pd.to_numeric(df[column], errors="coerce")
 
-        # Keep only records with valid dates.
         df = df.dropna(subset=["date"]).reset_index(drop=True)
-
         return df
 
     except Exception as error:
-        st.error(f"Could not load dataset: {error}")
+        st.error(f"Could not load default dataset: {error}")
+        return pd.DataFrame()
+
+
+# =============================================================================
+# CUSTOM DATASET LOADER (For Batch Prediction)
+# =============================================================================
+
+def load_custom_dataset(uploaded_file):
+    try:
+        if uploaded_file.name.lower().endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+
+        metadata_mask = df.astype(str).apply(
+            lambda column: column.str.strip().str.startswith("#")
+        ).any(axis=1)
+        df = df.loc[~metadata_mask].copy()
+
+        df.columns = df.columns.astype(str).str.strip().str.lower()
+        df.reset_index(drop=True, inplace=True)
+
+        missing_columns = [
+            column for column in REQUIRED_DATA_COLUMNS
+            if column not in df.columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                f"Dataset is missing required columns: {missing_columns}"
+            )
+
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+        for column in [
+            "price", "usdprice", "latitude", "longitude"
+        ]:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
+        df = df.dropna(subset=["date"]).reset_index(drop=True)
+        return df
+
+    except Exception as error:
+        st.error(f"Could not load custom dataset: {error}")
         return pd.DataFrame()
 
 
@@ -336,7 +318,6 @@ def reset_prediction_children(*keys):
 
 
 def price_status_label(value):
-    """Friendly labels only; the original dataset value is passed to the model."""
     labels = {
         "actual": "Actual",
         "actual,aggregate": "Actual + Aggregate",
@@ -351,11 +332,6 @@ def price_type_label(value):
 
 
 def get_market_coordinates(dataframe, region, zone, market):
-    """
-    Return representative coordinates for the selected market.
-    In this dataset each region/zone/market combination has one coordinate
-    pair; the mean also safely handles repeated records.
-    """
     market_rows = dataframe[
         (dataframe["admin1"].astype(str) == str(region))
         & (dataframe["admin2"].astype(str) == str(zone))
@@ -383,35 +359,41 @@ def get_market_coordinates(dataframe, region, zone, market):
 
 
 # =============================================================================
-# =============================================================================
 # APPLICATION HEADER
 # =============================================================================
 
-header_col1, header_col2 = st.columns(
-    [0.75, 12],
-    vertical_alignment="center",
-)
-
-with header_col1:
-    st.image(str(FLAG_ICON_PATH), width=62)
-
-with header_col2:
-    st.markdown(
-        '<h1 class="app-title">'
-        'Ethiopian Food Price Prediction & Market Analysis'
-        '</h1>',
-        unsafe_allow_html=True,
-    )
-
 st.markdown(
-    '<div class="app-subtitle">'
-    'An interactive decision-support application built for localized '
-    'market forecasting and price intelligence.'
-    '</div>',
+    """
+    <div style="display:flex; align-items:center; gap:16px; margin: 0 0 8px 0;">
+      <svg width="50" height="27" viewBox="0 0 50 27" role="img"
+           aria-label="Ethiopian flag" xmlns="http://www.w3.org/2000/svg"
+           style="flex:0 0 auto; border-radius:6px; overflow:hidden;">
+        <defs><clipPath id="ethiopiaFlagClip"><rect width="50" height="27" rx="5"/></clipPath></defs>
+        <g clip-path="url(#ethiopiaFlagClip)">
+          <rect width="50" height="9" y="0" fill="#078930"/>
+          <rect width="50" height="9" y="9" fill="#FCDD09"/>
+          <rect width="50" height="9" y="18" fill="#DA121A"/>
+          <circle cx="25" cy="13.5" r="8" fill="#0F47AF"/>
+          <path d="M25 6.8 L26.5 11.2 L31.1 11.2 L27.4 13.9 L28.8 18.3 L25 15.6 L21.2 18.3 L22.6 13.9 L18.9 11.2 L23.5 11.2 Z"
+                fill="#FCDD09"/>
+        </g>
+      </svg>
+      <h1 style="margin:0; padding:0; font-size:2rem; line-height:1.2;
+                 font-weight:750; color:inherit;">
+        Ethiopian Food Price Prediction &amp; Market Analysis
+      </h1>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
-# NAVIGATION AND DATA UPLOAD
+st.markdown(
+    "An interactive decision-support application built for localized market "
+    "forecasting and price intelligence."
+)
+
+# =============================================================================
+# NAVIGATION MENU (Base dataset loads automatically for Overviews & Visualizations)
 # =============================================================================
 
 st.sidebar.markdown("### Navigation Menu")
@@ -426,11 +408,8 @@ menu = st.sidebar.radio(
     label_visibility="collapsed",
 )
 
-st.sidebar.markdown("---")
-
-# All dashboard pages use the repository's default Ethiopian dataset.
-# A separate uploader is provided only inside the batch-prediction section.
-df_data = load_dataset()
+# Load the default local dataset for general app views
+df_data = load_default_dataset()
 
 
 # =============================================================================
@@ -441,9 +420,8 @@ if menu == "📊 1. Data Overview & Market Signals":
 
     st.header("📊 Key Dataset Insights & Aggregations Overview")
     st.write(
-        "Explore the built-in Ethiopian food-price dataset, review regional "
-        "data quality, and analyze historical market signals. No upload is "
-        "needed to use the dashboard."
+        "Review core dataset aggregations, regional data health, "
+        "and run batch target predictions on a custom dataset file."
     )
 
     col1, col2, col3, col4 = st.columns(4)
@@ -571,115 +549,108 @@ if menu == "📊 1. Data Overview & Market Signals":
             )
 
     else:
-        st.warning("No valid dataset is currently available.")
+        st.warning("No valid default dataset is currently available.")
 
     st.markdown("---")
     st.subheader("🔮 Batch Price & USD Price Prediction")
     st.write(
-        "Upload a dataset here only when you want to run batch predictions. "
-        "The rest of the application always uses the built-in Ethiopian "
-        "food-price dataset and does not require an upload."
+        "Upload a custom dataset file below to run batch predictions across all records."
     )
 
-    batch_uploaded_file = st.file_uploader(
-        "📁 Upload a dataset for batch prediction only",
+    # File uploader is now restricted exclusively to the batch prediction section
+    uploaded_file = st.file_uploader(
+        "📁 Upload Custom Dataset for Batch Prediction",
         type=["xlsx", "csv"],
-        key="batch_prediction_uploader",
-        help=(
-            "Upload an Excel or CSV file containing the required model "
-            "features. This file will not replace the dashboard dataset."
-        ),
+        key="batch_file_uploader"
     )
 
-    if batch_uploaded_file is None:
-        st.info(
-            "Upload an Excel or CSV file above to enable batch predictions. "
-            "The dashboard and historical analytics remain available "
-            "without uploading anything."
+    if uploaded_file is None:
+        st.warning(
+            "⚠️ **Upload Required:** Upload a custom dataset using "
+            "the uploader above to enable batch predictions."
         )
 
     else:
-        batch_df = load_dataset(batch_uploaded_file)
+        df_batch = load_custom_dataset(uploaded_file)
 
-        if batch_df.empty:
+        if df_batch.empty:
             st.error(
                 "The uploaded dataset could not be loaded or does not "
                 "contain the required columns."
             )
-            st.stop()
+        else:
+            st.success(
+                f"📁 Active custom file loaded: **{uploaded_file.name}**"
+            )
 
-        st.success(
-            f"📁 Batch prediction file loaded: **{batch_uploaded_file.name}**"
-        )
+            selected_targets = st.multiselect(
+                "Select prediction targets",
+                TARGET_COLUMNS,
+                default=TARGET_COLUMNS,
+                key="batch_target_selector",
+            )
 
-        selected_targets = st.multiselect(
-            "Select prediction targets",
-            TARGET_COLUMNS,
-            default=TARGET_COLUMNS,
-            key="batch_target_selector",
-        )
+            st.caption(
+                "The uploaded price/usdprice values are not model inputs; "
+                "each target is predicted independently."
+            )
 
-        st.caption(
-            "The uploaded price/usdprice values are not model inputs; "
-            "each target is predicted independently."
-        )
+            if st.button("🚀 Run Batch Prediction with Model"):
+                bundle, error_msg = load_model_assets()
 
-        if st.button("🚀 Run Batch Prediction with Model"):
-            bundle, error_msg = load_model_assets()
+                if error_msg:
+                    st.error(
+                        f"Could not load model pipelines: {error_msg}"
+                    )
 
-            if error_msg:
-                st.error(
-                    f"Could not load model pipelines: {error_msg}"
-                )
+                elif not selected_targets:
+                    st.warning(
+                        "Select at least one target: price and/or usdprice."
+                    )
 
-            elif not selected_targets:
-                st.warning(
-                    "Select at least one target: price and/or usdprice."
-                )
+                else:
+                    try:
+                        df_predicted = df_batch.copy()
+                        X_batch = prepare_model_features(df_predicted)
 
-            else:
-                try:
-                    df_predicted = batch_df.copy()
-                    X_batch = prepare_model_features(df_predicted)
+                        for target_name in selected_targets:
+                            if target_name not in bundle["models"]:
+                                raise ValueError(
+                                    f"Saved artifact has no fitted model "
+                                    f"for {target_name}."
+                                )
 
-                    for target_name in selected_targets:
-                        if target_name not in bundle["models"]:
-                            raise ValueError(
-                                f"Saved artifact has no fitted model "
-                                f"for {target_name}."
+                            df_predicted[
+                                f"Predicted_{target_name}"
+                            ] = bundle["models"][target_name].predict(
+                                X_batch
                             )
 
-                        df_predicted[
-                            f"Predicted_{target_name}"
-                        ] = bundle["models"][target_name].predict(
-                            X_batch
+                        st.success(
+                            "Batch prediction completed for: "
+                            + ", ".join(selected_targets)
                         )
 
-                    st.success(
-                        "Batch prediction completed for: "
-                        + ", ".join(selected_targets)
-                    )
+                        st.dataframe(
+                            df_predicted.head(10),
+                            use_container_width=True,
+                        )
 
-                    st.dataframe(
-                        df_predicted.head(10),
-                        use_container_width=True,
-                    )
+                        csv_data = df_predicted.to_csv(
+                            index=False
+                        ).encode("utf-8")
 
-                    csv_data = df_predicted.to_csv(
-                        index=False
-                    ).encode("utf-8")
+                        st.download_button(
+                            label="📥 Download Predictions CSV",
+                            data=csv_data,
+                            file_name="predicted_dataset_results.csv",
+                            mime="text/csv",
+                        )
 
-                    st.download_button(
-                        label="📥 Download Predictions CSV",
-                        data=csv_data,
-                        file_name="predicted_dataset_results.csv",
-                        mime="text/csv",
-                    )
-
-                except Exception as error:
-                    st.error(
-                        f"Error during batch prediction execution: {error}"
-                    )
+                    except Exception as error:
+                        st.error(
+                            f"Error during batch prediction execution: {error}"
+                        )
 
 
 # =============================================================================
@@ -865,7 +836,7 @@ elif menu == "📈 2. Exploratory Analytics & Trends":
             )
 
     else:
-        st.info("No dataset is currently available for visualization.")
+        st.info("No default dataset is currently available for visualization.")
 
 
 # =============================================================================
@@ -882,8 +853,8 @@ elif menu == "🎯 3. Interactive Prediction Engine":
 
     if df_data.empty:
         st.error(
-            "The dataset is empty or invalid. Load the WFP dataset "
-            "or upload a valid dataset first."
+            "The dataset is empty or invalid. Ensure the default dataset "
+            "is available locally."
         )
         st.stop()
 
@@ -954,7 +925,6 @@ elif menu == "🎯 3. Interactive Prediction Engine":
             key="prediction_market",
         )
 
-    # Automatically obtain coordinates from the selected market.
     latitude, longitude = get_market_coordinates(
         df_data,
         admin1,
@@ -1032,8 +1002,6 @@ elif menu == "🎯 3. Interactive Prediction Engine":
             args=("prediction_unit",),
         )
 
-    # Show only units actually recorded for the selected category
-    # and commodity, preventing unrelated units from appearing.
     unit_options = get_options(
         df_data,
         "unit",
@@ -1045,7 +1013,7 @@ elif menu == "🎯 3. Interactive Prediction Engine":
 
     if not unit_options:
         st.warning(
-            "No measurement units were found in the dataset."
+            "No measurement units are recorded for the selected commodity."
         )
         st.stop()
 
@@ -1057,15 +1025,15 @@ elif menu == "🎯 3. Interactive Prediction Engine":
         )
 
     # -------------------------------------------------------------------------
-    # 3. PRICE INFORMATION
+    # 3. PRICE INFORMATION & DATE INPUT
     # -------------------------------------------------------------------------
 
     st.markdown(
-        '<div class="section-header">🏷️ 3. Price Information</div>',
+        '<div class="section-header">🏷️ 3. Price Information & Date</div>',
         unsafe_allow_html=True,
     )
 
-    status_col, type_col = st.columns(2, gap="large")
+    status_col, type_col, date_col = st.columns(3, gap="large")
 
     priceflag_options = get_options(df_data, "priceflag")
     pricetype_options = get_options(df_data, "pricetype")
@@ -1092,71 +1060,24 @@ elif menu == "🎯 3. Interactive Prediction Engine":
             key="prediction_pricetype",
         )
 
-    # -------------------------------------------------------------------------
-    # 4. DATE AND CURRENCY
-    # -------------------------------------------------------------------------
-
-    st.markdown(
-        '<div class="section-header">📅 4. Prediction Date</div>',
-        unsafe_allow_html=True,
-    )
-
-    date_col, currency_col = st.columns(2, gap="large")
-
-    valid_dates = df_data["date"].dropna()
-
-    if not valid_dates.empty:
-        default_date = valid_dates.max().date()
-    else:
-        default_date = pd.Timestamp("2022-12-15").date()
-
     with date_col:
-        date_val = st.date_input(
-            "Transaction Date",
-            value=default_date,
+        prediction_date = st.date_input(
+            "Prediction Date",
+            value=pd.to_datetime("today"),
             key="prediction_date",
         )
 
-    currency_options = get_options(df_data, "currency")
-
-    with currency_col:
-        if currency_options:
-            currency = st.selectbox(
-                "Currency",
-                options=currency_options,
-                key="prediction_currency",
-                disabled=True,
-            )
-        else:
-            currency = "ETB"
-            st.text_input(
-                "Currency",
-                value=currency,
-                disabled=True,
-            )
-
-    # -------------------------------------------------------------------------
-    # 5. PREDICTION
-    # -------------------------------------------------------------------------
-
     st.markdown("---")
 
-    if st.button(
-        "🚀 Predict Market Price",
-        key="run_market_prediction",
-    ):
-
+    if st.button("🔮 Calculate Real-Time Prediction"):
         bundle, error_msg = load_model_assets()
 
         if error_msg:
-            st.error(
-                f"Could not process prediction. "
-                f"Serialized assets error: {error_msg}"
-            )
-
+            st.error(f"Could not load model bundles: {error_msg}")
         else:
             try:
                 input_row = pd.DataFrame([{
+                    "date": pd.to_datetime(prediction_date),
                     "admin1": admin1,
                     "admin2": admin2,
                     "market": market,
@@ -1167,73 +1088,23 @@ elif menu == "🎯 3. Interactive Prediction Engine":
                     "unit": unit,
                     "priceflag": priceflag,
                     "pricetype": pricetype,
-                    "date": pd.to_datetime(date_val),
                 }])
 
                 X_input = prepare_model_features(input_row)
 
-                if "price" not in bundle["models"]:
-                    raise ValueError(
-                        "The saved model bundle does not contain "
-                        "a fitted price prediction model."
-                    )
+                res_col1, res_col2 = st.columns(2)
 
-                prediction = bundle["models"]["price"].predict(
-                    X_input
-                )[0]
+                if "price" in bundle["models"]:
+                    pred_price = bundle["models"]["price"].predict(X_input)[0]
+                    with res_col1:
+                        st.metric("Predicted Local Price", f"{pred_price:,.2f} ETB")
 
-                st.success(
-                    f"✨ Predicted Local Market Price: "
-                    f"**{prediction:,.2f} {currency}**"
-                )
+                if "usdprice" in bundle["models"]:
+                    pred_usd = bundle["models"]["usdprice"].predict(X_input)[0]
+                    with res_col2:
+                        st.metric("Predicted USD Price", f"${pred_usd:,.2f} USD")
 
-                with st.expander(
-                    "📋 View Selected Prediction Parameters"
-                ):
-                    display_row = input_row.copy()
-                    display_row["currency"] = currency
-                    st.dataframe(
-                        display_row,
-                        use_container_width=True,
-                    )
-
-                with st.expander(
-                    "📌 View Model Training & Test Performance Metrics"
-                ):
-
-                    if (
-                        "price" in bundle["metrics"]
-                        and isinstance(
-                            bundle["metrics"]["price"], dict
-                        )
-                    ):
-                        price_metrics = bundle["metrics"]["price"]
-
-                        m1, m2, m3, m4 = st.columns(4)
-
-                        m1.metric(
-                            "Training R² Score",
-                            f"{price_metrics['train_r2']:.4f}",
-                        )
-                        m2.metric(
-                            "Testing R² Score",
-                            f"{price_metrics['test_r2']:.4f}",
-                        )
-                        m3.metric(
-                            "Testing RMSE",
-                            f"{price_metrics['test_rmse']:.4f}",
-                        )
-                        m4.metric(
-                            "Overfit Gap",
-                            f"{price_metrics['overfit_gap']:.4f}",
-                        )
-                    else:
-                        st.info(
-                            "Price model evaluation metrics are "
-                            "not available in the saved bundle."
-                        )
+                st.success("Real-time inference completed successfully!")
 
             except Exception as error:
-                st.error(
-                    f"Error processing prediction parameters: {error}"
-                )
+                st.error(f"Error during prediction calculation: {error}")
