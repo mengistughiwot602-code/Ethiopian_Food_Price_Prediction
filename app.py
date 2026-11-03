@@ -353,7 +353,7 @@ st.markdown(
 # NAVIGATION AND DATA UPLOAD
 # =============================================================================
 
-st.sidebar.markdown("### Navigation Menu")
+st.sidebar.markdown("### Dashboard Navigations")
 
 menu = st.sidebar.radio(
     "Go to",
