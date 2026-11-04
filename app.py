@@ -553,6 +553,7 @@ if menu == "📊 1. Data Overview & Market Signals":
                                 df_predicted[f"Predicted_{target_name}"] = bundle["models"][target_name].predict(X_batch)
 
                             st.success("Batch prediction completed successfully!")
+                            st.toast
                             st.dataframe(df_predicted.head(10), use_container_width=True)
 
                             csv_data = df_predicted.to_csv(index=False).encode("utf-8")
