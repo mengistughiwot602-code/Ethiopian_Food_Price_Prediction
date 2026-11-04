@@ -828,7 +828,6 @@ elif menu == "🎯 3. Interactive Prediction Engine":
 
                 prediction = bundle["models"]["price"].predict(X_input)[0]
                 st.success(f"✨ Predicted Local Market Price: **{prediction:,.2f} {currency}**")
-                st.balloons()
 
                 with st.expander("📋 View Selected Prediction Parameters"):
                     display_row = input_row.copy()
